@@ -1,0 +1,103 @@
+@startuml
+!theme plain
+skinparam packageStyle rectangle
+skinparam backgroundColor white
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+
+title ijobs-scraper Package Structure
+
+package "ijobs-scraper (PyPI)" as pkg #D6EAF8 {
+  package "Core" as core #E8F8F5 {
+    class ScraperEngine <<orchestrator>> {
+      + scrape_source(source: SourceConfig): ScrapeResult
+      + parse_url(url: str): EnrichedJob
+      + scrape_all(sources: list): list[ScrapeResult]
+      + register_adapter(name, cls): void
+    }
+    class EnrichmentPipeline <<service>> {
+      + enrich(raw: RawListing, source: SourceConfig): EnrichedJob
+      - _build_prompt(raw): str
+      - _parse_response(data): EnrichedJob
+    }
+    class DedupEngine <<service>> {
+      + is_duplicate_url(url, source_slug): bool
+      + is_duplicate_hash(content_hash): bool
+      + compute_hash(title, company, location): str
+    }
+    class Scheduler <<utility>> {
+      + get_due_sources(sources, last_runs): list[SourceConfig]
+    }
+  }
+
+  package "Models" as models #FEF9E7 {
+    class SourceConfig <<pydantic>>
+    class RawListing <<pydantic>>
+    class EnrichedJob <<pydantic>>
+    class ScrapeResult <<pydantic>>
+    class JobRequirements <<pydantic>>
+  }
+
+  package "Protocols" as protocols #FDEDEC {
+    interface AIProvider {
+      + structured_extract(system, user, schema): dict
+    }
+    interface StorageBackend {
+      + get_known_urls(slug): set[str]
+      + check_content_hash(hash): bool
+      + save_raw_listing(slug, listing): void
+    }
+    interface JobCallback {
+      + __call__(job, source, raw): void
+    }
+  }
+
+  package "Adapters" as adapters #F5EEF8 {
+    abstract class BaseAdapter {
+      + {abstract} fetch_listings(config): AsyncIterator[RawListing]
+      + fetch_detail(listing, config): RawListing
+      + can_handle_url(url): bool
+    }
+    class APIAdapter extends BaseAdapter
+    class HTMLAdapter extends BaseAdapter
+    class BrowserAdapter extends BaseAdapter
+
+    package "API Adapters" as api_adapters {
+      class KenyaAirwaysAdapter
+      class GreenhouseAdapter
+      class SmartRecruitersAdapter
+      class CareerjetAdapter
+      class ReliefWebAdapter
+    }
+    package "HTML Adapters" as html_adapters {
+      class BrighterMondayAdapter
+      class MyJobMagAdapter
+      class MyGovAdapter
+      class FuzuAdapter
+      class KCBAdapter
+    }
+    package "Browser Adapters" as browser_adapters {
+      class WorkdayAdapter
+      class ImpactpoolAdapter
+      class WorldVisionAdapter
+    }
+  }
+
+  class AdapterRegistry <<registry>> {
+    + register(name): decorator
+    + get(name): BaseAdapter
+    + detect_from_url(url): BaseAdapter?
+  }
+}
+
+ScraperEngine --> EnrichmentPipeline : uses
+ScraperEngine --> DedupEngine : uses
+ScraperEngine --> AdapterRegistry : resolves adapters
+ScraperEngine ..> AIProvider : requires
+ScraperEngine ..> StorageBackend : optional
+ScraperEngine ..> JobCallback : optional
+EnrichmentPipeline ..> AIProvider : calls
+DedupEngine ..> StorageBackend : queries
+AdapterRegistry --> BaseAdapter : manages
+
+@enduml

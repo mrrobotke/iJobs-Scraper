@@ -1,0 +1,54 @@
+@startuml
+!theme plain
+skinparam backgroundColor white
+skinparam defaultFontName Arial
+skinparam activityBackgroundColor #D6EAF8
+skinparam activityBorderColor #2E86C1
+
+title Auto Scraper Data Flow
+
+start
+
+:Worker picks up **scrape_source** task;
+
+:Load SourceConfig from\ningestion_sources table;
+
+:Resolve adapter from\nAdapterRegistry;
+
+:Create ingestion_run record\n(status: running);
+
+partition "Per Listing" #E8F8F5 {
+  :Adapter.fetch_listings()\nyields RawListing;
+
+  if (URL in known_urls?) then (yes)
+    :Skip (Layer 1 dedup);
+    :Increment jobs_duplicated;
+  else (no)
+    :Adapter.fetch_detail()\nGet full job content;
+
+    :Save raw content to\ningestion_jobs table;
+
+    :EnrichmentPipeline.enrich()\nSend to OpenAI structured output;
+
+    :Receive EnrichedJob\n(validated Pydantic model);
+
+    :Compute content_hash\n(SHA-256);
+
+    if (content_hash exists?) then (yes)
+      :Skip (Layer 2 dedup);
+      :Mark as duplicate;
+    else (no)
+      :JobCallback(enriched_job)\nHost app creates Job record\nwith status='pending';
+
+      :Increment jobs_created;
+    endif
+  endif
+}
+
+:Update ingestion_run\n(status: completed, stats);
+
+:Update ingestion_source\n(last_run_at, total_jobs);
+
+stop
+
+@enduml

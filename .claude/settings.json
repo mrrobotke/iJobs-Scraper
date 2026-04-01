@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath' | { read -r f; case \"$f\" in *.py) ruff format \"$f\" && ruff check --fix \"$f\";; esac; } 2>/dev/null || true",
+            "timeout": 30,
+            "statusMessage": "Formatting & linting..."
+          },
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath' | { read -r f; case \"$f\" in */src/ijobs_scraper/*.py) if grep -qE '^\\s*(import|from)\\s+(fastapi|sqlalchemy|django|flask|requests)\\b' \"$f\" 2>/dev/null; then echo \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"PostToolUse\\\",\\\"additionalContext\\\":\\\"VIOLATION: Forbidden framework import detected. This package must have ZERO framework coupling. Remove the import immediately.\\\"}}\"; fi;; esac; } 2>/dev/null || true",
+            "timeout": 10,
+            "statusMessage": "Checking imports..."
+          },
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath' | { read -r f; case \"$f\" in *.py) mypy --strict \"$f\";; esac; } 2>/dev/null || true",
+            "timeout": 60,
+            "statusMessage": "Type checking..."
+          }
+        ]
+      }
+    ]
+  }
+}

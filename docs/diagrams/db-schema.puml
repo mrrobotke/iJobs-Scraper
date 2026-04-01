@@ -1,0 +1,94 @@
+@startuml
+!theme plain
+skinparam backgroundColor white
+skinparam defaultFontName Arial
+
+title Scraper Database Schema (iJobs Side)
+
+entity "ingestion_sources" as sources {
+  * **id** : UUID <<PK>>
+  --
+  * name : VARCHAR
+  * slug : VARCHAR <<UNIQUE>>
+  * adapter : VARCHAR
+  * source_type : VARCHAR
+  * config : JSONB
+  cron_schedule : VARCHAR
+  * is_active : BOOLEAN
+  last_run_at : TIMESTAMPTZ
+  last_success_at : TIMESTAMPTZ
+  * total_jobs_scraped : INTEGER
+  * error_count : INTEGER
+  * created_at : TIMESTAMPTZ
+  * updated_at : TIMESTAMPTZ
+}
+
+entity "ingestion_runs" as runs {
+  * **id** : UUID <<PK>>
+  --
+  * source_id : UUID <<FK>>
+  * status : VARCHAR
+  * jobs_found : INTEGER
+  * jobs_created : INTEGER
+  * jobs_duplicated : INTEGER
+  * jobs_failed : INTEGER
+  * started_at : TIMESTAMPTZ
+  completed_at : TIMESTAMPTZ
+  errors : JSONB
+  metadata : JSONB
+}
+
+entity "ingestion_jobs" as ijobs {
+  * **id** : UUID <<PK>>
+  --
+  * source_id : UUID <<FK>>
+  run_id : UUID <<FK>>
+  external_id : VARCHAR
+  * external_url : VARCHAR
+  * content_hash : VARCHAR
+  * status : VARCHAR
+  raw_content : TEXT
+  parsed_content : JSONB
+  job_id : UUID <<FK>>
+  error_message : TEXT
+  * created_at : TIMESTAMPTZ
+  * updated_at : TIMESTAMPTZ
+}
+
+entity "jobs" as jobs #D6EAF8 {
+  * **id** : UUID <<PK>>
+  --
+  * company_id : UUID <<FK>>
+  * title : VARCHAR
+  * description : TEXT
+  * source : VARCHAR
+  ingestion_source_id : UUID <<FK>>
+  external_url : VARCHAR
+  * status : VARCHAR
+  ...other fields...
+}
+
+entity "companies" as companies #D6EAF8 {
+  * **id** : UUID <<PK>>
+  --
+  * name : VARCHAR
+  website : VARCHAR
+  ...
+}
+
+sources ||--o{ runs : "has many"
+sources ||--o{ ijobs : "has many"
+runs ||--o{ ijobs : "contains"
+ijobs |o--o| jobs : "creates"
+jobs }o--|| companies : "belongs to"
+sources |o..o| jobs : "ingestion_source_id"
+
+note bottom of ijobs
+  Unique constraint:
+  (source_id, external_url)
+
+  Index on content_hash
+  for cross-source dedup
+end note
+
+@enduml

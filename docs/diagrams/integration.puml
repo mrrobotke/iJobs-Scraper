@@ -1,0 +1,92 @@
+@startuml
+!theme plain
+skinparam backgroundColor white
+skinparam defaultFontName Arial
+skinparam componentStyle rectangle
+
+title iJobs + ijobs-scraper Integration
+
+cloud "External Job Sources" as sources {
+  [Kenya Airways API] as ka
+  [Greenhouse API] as gh
+  [SmartRecruiters API] as sr
+  [Careerjet API] as cj
+  [ReliefWeb API] as rw
+  [BrighterMonday] as bm
+  [MyJobMag] as mjm
+  [MyGov] as mg
+  [Fuzu] as fz
+  [Workday Sites] as wd
+}
+
+package "ijobs-scraper (PyPI Package)" as scraper #D6EAF8 {
+  [ScraperEngine] as engine
+  [Adapter Registry] as registry
+  [Enrichment Pipeline] as enrich
+  [Dedup Engine] as dedup
+
+  package "Adapters" as adps #E8F8F5 {
+    [API Adapters] as api_a
+    [HTML Adapters] as html_a
+    [Browser Adapters] as browser_a
+  }
+}
+
+cloud "OpenAI API" as openai #FCF3CF {
+  [GPT-4.1-mini\nStructured Outputs]
+}
+
+package "iJobs Backend" as ijobs #FDEDEC {
+  [Bridge Layer] as bridge
+  note right of bridge
+    IJobsAIProvider
+    IJobsStorage
+    handle_new_job callback
+  end note
+
+  [Background Worker] as worker
+  [Admin API] as admin
+  [Manual Scraper\nEndpoint] as manual
+
+  database "PostgreSQL" as db {
+    [jobs]
+    [ingestion_sources]
+    [ingestion_runs]
+    [ingestion_jobs]
+    [companies]
+  }
+}
+
+' Source connections
+ka --> api_a
+gh --> api_a
+sr --> api_a
+cj --> api_a
+rw --> api_a
+bm --> html_a
+mjm --> html_a
+mg --> html_a
+fz --> html_a
+wd --> browser_a
+
+' Internal scraper flow
+api_a --> registry
+html_a --> registry
+browser_a --> registry
+registry --> engine
+engine --> enrich
+engine --> dedup
+
+' AI connection
+enrich --> openai : structured_extract()
+
+' Bridge connections (protocols)
+engine ..> bridge : AIProvider\nStorageBackend\nJobCallback
+
+' iJobs internal
+bridge --> db : reads/writes
+worker --> engine : scrape_source()
+admin --> worker : trigger scrape
+manual --> engine : parse_url()
+
+@enduml

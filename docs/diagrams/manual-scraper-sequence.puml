@@ -1,0 +1,40 @@
+@startuml
+!theme plain
+skinparam backgroundColor white
+skinparam defaultFontName Arial
+skinparam sequenceArrowThickness 1.5
+
+title Manual Scraper Sequence
+
+actor "Job Seeker /\nEmployer" as user
+participant "Frontend" as fe
+participant "POST /scraper/parse-url" as api
+participant "ScraperEngine" as engine
+participant "AdapterRegistry" as registry
+participant "Adapter" as adapter
+participant "EnrichmentPipeline" as enrich
+participant "OpenAI API" as openai
+
+user -> fe: Paste job URL
+fe -> api: POST { url: "https://..." }
+api -> engine: parse_url(url)
+
+engine -> registry: detect_from_url(url)
+registry --> engine: GreenhouseAdapter
+
+engine -> adapter: fetch_detail(listing, config)
+adapter -> adapter: HTTP GET job page
+adapter --> engine: RawListing\n(raw_html + raw_json)
+
+engine -> enrich: enrich(raw_listing, source)
+enrich -> enrich: Clean content\n(truncate to 15K chars)
+enrich -> openai: POST /v1/chat/completions\nwith response_format:\n{ type: "json_schema" }
+openai --> enrich: Structured JSON response
+enrich -> enrich: Parse into EnrichedJob\n+ compute content_hash
+enrich --> engine: EnrichedJob
+
+engine --> api: EnrichedJob
+api --> fe: JSON response\n(pre-fills job creation form)
+fe --> user: Form auto-populated\nwith enriched data
+
+@enduml
