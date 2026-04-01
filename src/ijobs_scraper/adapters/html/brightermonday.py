@@ -1,0 +1,167 @@
+"""BrighterMonday Kenya HTML adapter.
+
+BrighterMonday is a Laravel-based job board with Cloudflare protection
+and CSRF tokens. The adapter extracts CSRF tokens from ``<meta>`` tags
+and maintains session cookies across paginated requests.
+
+Example::
+
+    source = SourceConfig(
+        name="BrighterMonday",
+        slug="brightermonday",
+        adapter="brightermonday",
+        source_type=SourceType.HTML,
+        base_url="https://www.brightermonday.co.ke",
+    )
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+from urllib.parse import urljoin
+
+from ijobs_scraper._registry import AdapterRegistry
+from ijobs_scraper.adapters.base import HTMLAdapter
+from ijobs_scraper.models import RawListing, SourceConfig
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+logger = logging.getLogger(__name__)
+
+MAX_PAGES = 200
+
+
+@AdapterRegistry.register("brightermonday")
+class BrighterMondayAdapter(HTMLAdapter):
+    """Scrapes jobs from BrighterMonday Kenya.
+
+    BrighterMonday uses Laravel with CSRF protection. The adapter
+    extracts CSRF tokens from ``<meta name="csrf-token">`` tags and
+    maintains session cookies across paginated requests via the shared
+    httpx client.
+    """
+
+    async def _extract_csrf_token(self, url: str) -> str | None:
+        """Fetch a page and extract the CSRF token from meta tags.
+
+        Args:
+            url: The URL to fetch the CSRF token from.
+
+        Returns:
+            The CSRF token string, or ``None`` if not found.
+        """
+        soup = await self._fetch_page(url)
+        meta = soup.find("meta", attrs={"name": "csrf-token"})
+        if meta:
+            content = meta.get("content")
+            if content and isinstance(content, str):
+                return content
+        return None
+
+    async def fetch_listings(self, config: SourceConfig) -> AsyncIterator[RawListing]:
+        """Fetch job listings from BrighterMonday Kenya.
+
+        Paginates through ``?page=N`` URL parameters, extracting job
+        cards from the search results page. CSRF tokens are extracted
+        from the first page and maintained via session cookies.
+
+        Args:
+            config: Source configuration with ``base_url`` pointing to
+                the BrighterMonday domain.
+
+        Yields:
+            A ``RawListing`` for each job card found.
+        """
+        base = config.base_url.rstrip("/")
+        url = f"{base}/jobs"
+
+        # Fetch first page to establish session cookies and extract CSRF token
+        csrf_token = await self._extract_csrf_token(url)
+        if csrf_token:
+            client = await self._ensure_client()
+            client.headers["X-CSRF-TOKEN"] = csrf_token
+            logger.debug("Session initialized for %s", config.slug)
+
+        page = 1
+        while page <= MAX_PAGES:
+            params = {"page": str(page)} if page > 1 else None
+            soup = await self._fetch_page(url, params=params)
+
+            cards = soup.select(".job-card")
+            if not cards:
+                break
+
+            for card in cards:
+                try:
+                    title_link = card.select_one(".job-card__title a")
+                    if title_link is None:
+                        logger.debug("Skipping card with no title link on page %d", page)
+                        continue
+
+                    title = title_link.get_text(strip=True)
+                    href = title_link.get("href", "")
+                    external_url = urljoin(base, str(href)) if href else ""
+
+                    if not external_url:
+                        logger.debug("Skipping listing with no URL on page %d", page)
+                        continue
+
+                    company_el = card.select_one(".job-card__company")
+                    company = company_el.get_text(strip=True) if company_el else config.name
+
+                    job_id = card.get("data-job-id")
+                    external_id = str(job_id) if job_id else None
+
+                    yield RawListing(
+                        external_id=external_id,
+                        external_url=external_url,
+                        title=title,
+                        company_name=company,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Skipping malformed BrighterMonday listing on page %d",
+                        page,
+                        exc_info=True,
+                    )
+                    continue
+
+            # Check for next page
+            next_link = soup.select_one(".pagination__next[rel='next']")
+            if next_link is None:
+                break
+
+            page += 1
+
+    async def fetch_detail(self, listing: RawListing, config: SourceConfig) -> RawListing:
+        """Fetch the full job detail page and populate ``raw_html``.
+
+        Args:
+            listing: The listing to enrich with full HTML content.
+            config: Source configuration.
+
+        Returns:
+            The listing with ``raw_html`` populated from the detail page.
+        """
+        if listing.raw_html:
+            logger.debug("Detail already present for %s", listing.external_url)
+            return listing
+
+        soup = await self._fetch_page(listing.external_url)
+        detail = soup.select_one(".job-details")
+        html = str(detail) if detail else str(soup)
+
+        return listing.model_copy(update={"raw_html": html})
+
+    def can_handle_url(self, url: str) -> bool:
+        """Check if this URL belongs to BrighterMonday Kenya.
+
+        Args:
+            url: The URL to check.
+
+        Returns:
+            True if the URL contains the BrighterMonday domain.
+        """
+        return "brightermonday.co.ke" in url
