@@ -141,13 +141,25 @@ class APIAdapter(BaseAdapter):
 
 
 class HTMLAdapter(BaseAdapter):
-    """Base for BeautifulSoup HTML scraping with rate limiting and jitter."""
+    """Base for BeautifulSoup HTML scraping with rate limiting and jitter.
+
+    The ``detail_delay`` parameter controls the rate limit for detail page
+    fetches, which are called once per listing. A shorter delay is safe for
+    portals that tolerate higher request rates on detail pages.
+    """
 
     MAX_RESPONSE_SIZE = 10 * 1024 * 1024  # 10 MB
+    DEFAULT_MAX_PAGES = 200
 
-    def __init__(self, request_delay: float = 2.0, jitter: float = 1.0) -> None:
+    def __init__(
+        self,
+        request_delay: float = 2.0,
+        jitter: float = 1.0,
+        detail_delay: float | None = None,
+    ) -> None:
         self._request_delay = request_delay
         self._jitter = jitter
+        self._detail_delay = detail_delay if detail_delay is not None else request_delay
         self._last_request_time: float = 0.0
         self._client: httpx.AsyncClient | None = None
 
@@ -161,10 +173,16 @@ class HTMLAdapter(BaseAdapter):
             )
         return self._client
 
-    async def _rate_limit(self) -> None:
-        """Enforce delay + random jitter between requests."""
+    async def _rate_limit(self, *, detail: bool = False) -> None:
+        """Enforce delay + random jitter between requests.
+
+        Args:
+            detail: If True, use the shorter ``detail_delay`` instead
+                of the standard ``request_delay``.
+        """
         elapsed = time.monotonic() - self._last_request_time
-        delay = self._request_delay + random.uniform(0, self._jitter)
+        base = self._detail_delay if detail else self._request_delay
+        delay = base + random.uniform(0, self._jitter)
         if elapsed < delay:
             await asyncio.sleep(delay - elapsed)
         self._last_request_time = time.monotonic()
@@ -202,30 +220,54 @@ class HTMLAdapter(BaseAdapter):
         self,
         url: str,
         params: dict[str, Any] | None = None,
+        *,
+        detail: bool = False,
     ) -> BeautifulSoup:
         """Fetch URL and return parsed BeautifulSoup document.
+
+        Uses streaming to reject oversized responses before reading the
+        full body into memory.
+
+        Args:
+            url: The URL to fetch.
+            params: Optional query parameters.
+            detail: If True, use the shorter ``detail_delay`` for rate
+                limiting (used by ``fetch_detail`` calls).
 
         Raises:
             AdapterError: If the response body exceeds ``MAX_RESPONSE_SIZE``.
             RateLimitError: If the server returns HTTP 429.
         """
-        await self._rate_limit()
+        await self._rate_limit(detail=detail)
         client = await self._ensure_client()
-        resp = await client.get(url, params=params)
-        if resp.status_code == 429:
-            retry_after = resp.headers.get("Retry-After")
-            raise RateLimitError(
-                self.__class__.__name__,
-                int(retry_after) if retry_after and retry_after.isdigit() else None,
-            )
-        resp.raise_for_status()
-        if len(resp.content) > self.MAX_RESPONSE_SIZE:
+        async with client.stream("GET", url, params=params) as resp:
+            if resp.status_code == 429:
+                retry_after = resp.headers.get("Retry-After")
+                raise RateLimitError(
+                    self.__class__.__name__,
+                    int(retry_after) if retry_after and retry_after.isdigit() else None,
+                )
+            resp.raise_for_status()
+            # Check Content-Length before reading body
+            content_length = resp.headers.get("content-length")
+            if (
+                content_length
+                and content_length.isdigit()
+                and int(content_length) > self.MAX_RESPONSE_SIZE
+            ):
+                raise AdapterError(
+                    self.__class__.__name__,
+                    f"Response too large ({content_length} bytes, max {self.MAX_RESPONSE_SIZE})",
+                    retryable=False,
+                )
+            body = await resp.aread()
+        if len(body) > self.MAX_RESPONSE_SIZE:
             raise AdapterError(
                 self.__class__.__name__,
-                f"Response too large ({len(resp.content)} bytes, max {self.MAX_RESPONSE_SIZE})",
+                f"Response too large ({len(body)} bytes, max {self.MAX_RESPONSE_SIZE})",
                 retryable=False,
             )
-        return BeautifulSoup(resp.text, "lxml")
+        return BeautifulSoup(body.decode(resp.encoding or "utf-8", errors="replace"), "lxml")
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""

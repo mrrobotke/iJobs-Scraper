@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-MAX_PAGES = 200
+DEFAULT_MAX_PAGES = 200
 _HOST = "fuzu.com"
 
 
@@ -57,9 +57,10 @@ class FuzuAdapter(HTMLAdapter):
         """
         base = config.base_url.rstrip("/")
         url = f"{base}/kenya/jobs"
+        max_pages = int(config.config.get("max_pages", DEFAULT_MAX_PAGES))
         page = 1
 
-        while page <= MAX_PAGES:
+        while page <= max_pages:
             params = {"page": str(page)} if page > 1 else None
             soup = await self._fetch_page(url, params=params)
 
@@ -135,9 +136,9 @@ class FuzuAdapter(HTMLAdapter):
             logger.warning("Rejecting detail URL outside expected host: %s", listing.external_url)
             return listing
 
-        soup = await self._fetch_page(listing.external_url)
+        soup = await self._fetch_page(listing.external_url, detail=True)
         detail = soup.select_one(".job-detail")
-        html = str(detail) if detail else str(soup)
+        html = str(detail) if detail else str(soup.body or soup)
 
         return listing.model_copy(update={"raw_html": html})
 

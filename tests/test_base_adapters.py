@@ -95,7 +95,23 @@ class TestMaxResponseSize:
     """Tests for HTMLAdapter._fetch_page response size limit."""
 
     @respx.mock
-    async def test_rejects_oversized_response(self) -> None:
+    async def test_rejects_oversized_content_length_header(self) -> None:
+        url = "https://example.com/huge"
+        size = HTMLAdapter.MAX_RESPONSE_SIZE + 1
+        respx.get(url).mock(
+            return_value=httpx.Response(
+                200,
+                content=b"small body",
+                headers={"content-length": str(size)},
+            ),
+        )
+        adapter = _ConcreteHTMLAdapter(request_delay=0, jitter=0)
+
+        with pytest.raises(AdapterError, match="Response too large"):
+            await adapter._fetch_page(url)
+
+    @respx.mock
+    async def test_rejects_oversized_body(self) -> None:
         url = "https://example.com/huge"
         oversized = b"x" * (HTMLAdapter.MAX_RESPONSE_SIZE + 1)
         respx.get(url).mock(
