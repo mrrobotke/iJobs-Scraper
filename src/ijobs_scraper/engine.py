@@ -89,14 +89,14 @@ class ScraperEngine:
                 enriched = await enrich(listing, source, self._ai_provider)
 
                 # Layer 2: cross-source content hash dedup
-                if self._dedup_enabled and self._storage:
-                    if await self._storage.check_content_hash(enriched.content_hash):
-                        result.jobs_duplicated += 1
-                        if self._storage:
-                            await self._storage.mark_duplicate(
-                                source.slug, listing, enriched.content_hash
-                            )
-                        continue
+                if (
+                    self._dedup_enabled
+                    and self._storage
+                    and await self._storage.check_content_hash(enriched.content_hash)
+                ):
+                    result.jobs_duplicated += 1
+                    await self._storage.mark_duplicate(source.slug, listing, enriched.content_hash)
+                    continue
 
                 # Persist raw listing
                 if self._storage:
@@ -146,10 +146,7 @@ class ScraperEngine:
         Raises:
             AdapterError: If no adapter can handle the URL.
         """
-        if hint:
-            adapter_cls = AdapterRegistry.get(hint)
-        else:
-            adapter_cls = AdapterRegistry.detect_from_url(url)
+        adapter_cls = AdapterRegistry.get(hint) if hint else AdapterRegistry.detect_from_url(url)
 
         if adapter_cls is None:
             raise AdapterError("auto", f"No adapter found for URL: {url}", retryable=False)
