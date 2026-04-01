@@ -48,8 +48,8 @@ class TestGetDueSources:
 
     def test_not_yet_due(self) -> None:
         source = _make_source("test", cron="0 */6 * * *")
-        # Last run was 1 hour ago, cron is every 6 hours → not due
-        last_run = datetime.now(UTC) - timedelta(hours=1)
+        # Last run was 1 minute ago, cron is every 6 hours → not due
+        last_run = datetime.now(UTC) - timedelta(minutes=1)
         due = get_due_sources([source], {"test": last_run})
         assert len(due) == 0
 
@@ -62,7 +62,7 @@ class TestGetDueSources:
 
         last_runs = {
             "due": datetime.now(UTC) - timedelta(hours=7),
-            "not-due": datetime.now(UTC) - timedelta(hours=1),
+            "not-due": datetime.now(UTC) - timedelta(minutes=1),
         }
 
         due = get_due_sources([s1, s2, s3, s4, s5], last_runs)

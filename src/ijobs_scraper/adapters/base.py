@@ -26,7 +26,7 @@ class BaseAdapter(ABC):
     """Abstract base for all portal adapters."""
 
     @abstractmethod
-    async def fetch_listings(self, config: SourceConfig) -> AsyncIterator[RawListing]:
+    def fetch_listings(self, config: SourceConfig) -> AsyncIterator[RawListing]:
         """Yield raw job listings from the source."""
         ...  # pragma: no cover
 
