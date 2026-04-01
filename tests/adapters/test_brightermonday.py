@@ -143,8 +143,10 @@ class TestFetchListings:
         adapter = BrighterMondayAdapter(request_delay=0, jitter=0)
         _ = [listing async for listing in adapter.fetch_listings(_make_config())]
 
+        assert adapter._csrf_token == "abc123csrftoken"  # noqa: SLF001
+        # Token should NOT be on shared client headers (scoped to portal requests)
         client = await adapter._ensure_client()
-        assert client.headers.get("X-CSRF-TOKEN") == "abc123csrftoken"
+        assert "X-CSRF-TOKEN" not in client.headers
 
 
 class TestFetchDetail:

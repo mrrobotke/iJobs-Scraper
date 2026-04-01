@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MAX_PAGES = 200
+_HOST = "brightermonday.co.ke"
 
 
 @AdapterRegistry.register("brightermonday")
@@ -78,10 +79,8 @@ class BrighterMondayAdapter(HTMLAdapter):
         url = f"{base}/jobs"
 
         # Fetch first page to establish session cookies and extract CSRF token
-        csrf_token = await self._extract_csrf_token(url)
-        if csrf_token:
-            client = await self._ensure_client()
-            client.headers["X-CSRF-TOKEN"] = csrf_token
+        self._csrf_token = await self._extract_csrf_token(url)
+        if self._csrf_token:
             logger.debug("Session initialized for %s", config.slug)
 
         page = 1
@@ -103,9 +102,10 @@ class BrighterMondayAdapter(HTMLAdapter):
                     title = title_link.get_text(strip=True)
                     href = title_link.get("href", "")
                     external_url = urljoin(base, str(href)) if href else ""
+                    external_url = self._validate_url(external_url, _HOST) or ""
 
                     if not external_url:
-                        logger.debug("Skipping listing with no URL on page %d", page)
+                        logger.debug("Skipping listing with no valid URL on page %d", page)
                         continue
 
                     company_el = card.select_one(".job-card__company")
@@ -135,6 +135,15 @@ class BrighterMondayAdapter(HTMLAdapter):
 
             page += 1
 
+    async def _fetch_page_with_csrf(self, url: str) -> None:
+        """Attach CSRF token header only for portal requests."""
+        client = await self._ensure_client()
+        token = getattr(self, "_csrf_token", None)
+        if token and _HOST in url:
+            client.headers["X-CSRF-TOKEN"] = token
+        elif "X-CSRF-TOKEN" in client.headers:
+            del client.headers["X-CSRF-TOKEN"]
+
     async def fetch_detail(self, listing: RawListing, config: SourceConfig) -> RawListing:
         """Fetch the full job detail page and populate ``raw_html``.
 
@@ -149,6 +158,11 @@ class BrighterMondayAdapter(HTMLAdapter):
             logger.debug("Detail already present for %s", listing.external_url)
             return listing
 
+        if not self._validate_url(listing.external_url, _HOST):
+            logger.warning("Rejecting detail URL outside expected host: %s", listing.external_url)
+            return listing
+
+        await self._fetch_page_with_csrf(listing.external_url)
         soup = await self._fetch_page(listing.external_url)
         detail = soup.select_one(".job-details")
         html = str(detail) if detail else str(soup)
@@ -164,4 +178,4 @@ class BrighterMondayAdapter(HTMLAdapter):
         Returns:
             True if the URL contains the BrighterMonday domain.
         """
-        return "brightermonday.co.ke" in url
+        return _HOST in url

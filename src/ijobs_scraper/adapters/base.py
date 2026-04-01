@@ -7,16 +7,20 @@ BrowserAdapter (Playwright) with built-in rate limiting.
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 import time
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
 
 from ijobs_scraper.exceptions import AdapterError, RateLimitError
 from ijobs_scraper.models import RawListing, SourceConfig
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -139,6 +143,8 @@ class APIAdapter(BaseAdapter):
 class HTMLAdapter(BaseAdapter):
     """Base for BeautifulSoup HTML scraping with rate limiting and jitter."""
 
+    MAX_RESPONSE_SIZE = 10 * 1024 * 1024  # 10 MB
+
     def __init__(self, request_delay: float = 2.0, jitter: float = 1.0) -> None:
         self._request_delay = request_delay
         self._jitter = jitter
@@ -163,12 +169,43 @@ class HTMLAdapter(BaseAdapter):
             await asyncio.sleep(delay - elapsed)
         self._last_request_time = time.monotonic()
 
+    @staticmethod
+    def _validate_url(url: str, expected_host: str) -> str | None:
+        """Validate that a URL uses HTTP(S) and matches the expected host.
+
+        Prevents SSRF by rejecting URLs with non-HTTP schemes or
+        unexpected hosts that may have been injected via malicious
+        ``href`` attributes in scraped HTML.
+
+        Args:
+            url: The URL to validate.
+            expected_host: A substring that must appear in the URL host
+                (e.g. ``"brightermonday.co.ke"``).
+
+        Returns:
+            The URL if valid, or ``None`` if it fails validation.
+        """
+        try:
+            parsed = urlparse(url)
+        except ValueError:
+            return None
+        if parsed.scheme not in ("http", "https"):
+            return None
+        if expected_host not in (parsed.netloc or ""):
+            return None
+        return url
+
     async def _fetch_page(
         self,
         url: str,
         params: dict[str, Any] | None = None,
     ) -> BeautifulSoup:
-        """Fetch URL and return parsed BeautifulSoup document."""
+        """Fetch URL and return parsed BeautifulSoup document.
+
+        Raises:
+            AdapterError: If the response body exceeds ``MAX_RESPONSE_SIZE``.
+            RateLimitError: If the server returns HTTP 429.
+        """
         await self._rate_limit()
         client = await self._ensure_client()
         resp = await client.get(url, params=params)
@@ -179,6 +216,12 @@ class HTMLAdapter(BaseAdapter):
                 int(retry_after) if retry_after and retry_after.isdigit() else None,
             )
         resp.raise_for_status()
+        if len(resp.content) > self.MAX_RESPONSE_SIZE:
+            raise AdapterError(
+                self.__class__.__name__,
+                f"Response too large ({len(resp.content)} bytes, max {self.MAX_RESPONSE_SIZE})",
+                retryable=False,
+            )
         return BeautifulSoup(resp.text, "lxml")
 
     async def close(self) -> None:

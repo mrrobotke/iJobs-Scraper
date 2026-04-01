@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MAX_PAGES = 200
+_HOST = "fuzu.com"
 
 
 @AdapterRegistry.register("fuzu")
@@ -78,6 +79,7 @@ class FuzuAdapter(HTMLAdapter):
 
                     href = link.get("href", "")
                     external_url = urljoin(base, str(href)) if href else ""
+                    external_url = self._validate_url(external_url, _HOST) or ""
 
                     if not external_url:
                         logger.debug("Skipping listing with no URL on page %d", page)
@@ -124,6 +126,10 @@ class FuzuAdapter(HTMLAdapter):
             logger.debug("Detail already present for %s", listing.external_url)
             return listing
 
+        if not self._validate_url(listing.external_url, _HOST):
+            logger.warning("Rejecting detail URL outside expected host: %s", listing.external_url)
+            return listing
+
         soup = await self._fetch_page(listing.external_url)
         detail = soup.select_one(".job-detail")
         html = str(detail) if detail else str(soup)
@@ -139,4 +145,4 @@ class FuzuAdapter(HTMLAdapter):
         Returns:
             True if the URL contains the Fuzu domain.
         """
-        return "fuzu.com" in url
+        return _HOST in url
