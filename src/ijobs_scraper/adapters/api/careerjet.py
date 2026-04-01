@@ -96,6 +96,13 @@ class CareerjetAdapter(APIAdapter):
 
             result: dict[str, Any] = await asyncio.to_thread(cj.search, search_params)
 
+            if result.get("type") == "error":
+                raise AdapterError(
+                    "careerjet",
+                    f"Careerjet API error: {result.get('error', 'unknown')}",
+                    retryable=True,
+                )
+
             jobs: list[dict[str, Any]] = result.get("jobs", [])
             if not jobs:
                 break
@@ -104,6 +111,7 @@ class CareerjetAdapter(APIAdapter):
                 try:
                     external_url: str = job.get("url", "")
                     if not external_url:
+                        logger.debug("Skipping Careerjet listing with no URL")
                         continue
 
                     yield RawListing(
@@ -124,6 +132,11 @@ class CareerjetAdapter(APIAdapter):
                 break
             page += 1
             if page >= MAX_PAGES:
+                logger.warning(
+                    "Reached MAX_PAGES (%d) for source %s — results may be truncated",
+                    MAX_PAGES,
+                    config.slug,
+                )
                 break
 
     def can_handle_url(self, url: str) -> bool:

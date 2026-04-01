@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_LIMIT = 50
+MAX_PAGES = 200
 REQUESTED_FIELDS = [
     "title",
     "body-html",
@@ -68,6 +69,7 @@ class ReliefWebAdapter(APIAdapter):
         url = f"{base}/v1/jobs"
         appname: str = config.config["appname"]
         offset = 0
+        page = 0
 
         while True:
             params: dict[str, Any] = {
@@ -94,6 +96,7 @@ class ReliefWebAdapter(APIAdapter):
                     if not external_url and item_id:
                         external_url = f"https://reliefweb.int/job/{item_id}"
                     if not external_url:
+                        logger.debug("Skipping listing with no URL: external_id=%s", item_id)
                         continue
 
                     sources: list[dict[str, Any]] = fields.get("source", [])
@@ -117,7 +120,15 @@ class ReliefWebAdapter(APIAdapter):
 
             total_count: int = data.get("totalCount", 0)
             offset += DEFAULT_LIMIT
+            page += 1
             if offset >= total_count:
+                break
+            if page >= MAX_PAGES:
+                logger.warning(
+                    "Reached MAX_PAGES (%d) for source %s — results may be truncated",
+                    MAX_PAGES,
+                    config.slug,
+                )
                 break
 
     async def fetch_detail(self, listing: RawListing, config: SourceConfig) -> RawListing:

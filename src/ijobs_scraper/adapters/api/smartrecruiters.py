@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_LIMIT = 100
+MAX_PAGES = 200
 
 
 @AdapterRegistry.register("smartrecruiters")
@@ -60,6 +61,7 @@ class SmartRecruitersAdapter(APIAdapter):
         base = config.base_url.rstrip("/")
         url = f"{base}/v1/companies/{company_slug}/postings"
         offset = 0
+        page = 0
 
         while True:
             data: dict[str, Any] = await self._get(
@@ -86,7 +88,15 @@ class SmartRecruitersAdapter(APIAdapter):
                     continue
 
             offset += len(postings)
+            page += 1
             if not postings or offset >= total_found:
+                break
+            if page >= MAX_PAGES:
+                logger.warning(
+                    "Reached MAX_PAGES (%d) for source %s — results may be truncated",
+                    MAX_PAGES,
+                    config.slug,
+                )
                 break
 
     async def fetch_detail(self, listing: RawListing, config: SourceConfig) -> RawListing:

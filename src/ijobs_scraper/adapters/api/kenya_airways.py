@@ -16,6 +16,7 @@ Example::
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from ijobs_scraper._registry import AdapterRegistry
@@ -25,6 +26,7 @@ from ijobs_scraper.models import RawListing, SourceConfig
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+logger = logging.getLogger(__name__)
 
 CAREERS_API = "https://api-irec-prod.kenya-airways.com/careers/api/v2"
 DEFAULT_LIMIT = 50
@@ -50,8 +52,7 @@ class KenyaAirwaysAdapter(APIAdapter):
         Yields:
             A ``RawListing`` for each open position.
         """
-        base = config.base_url.rstrip("/")
-        url = f"{base}/careers/api/v2/jobs"
+        url = f"{CAREERS_API}/jobs"
         offset = 0
         limit = DEFAULT_LIMIT
         page = 0
@@ -64,27 +65,41 @@ class KenyaAirwaysAdapter(APIAdapter):
                 break
 
             for job in jobs:
-                external_id = str(job["id"]) if "id" in job else None
-                external_url = job.get("url") or job.get("absolute_url", "")
-                if not external_url and external_id:
-                    external_url = f"https://careers.kenya-airways.com/jobs/{external_id}"
+                try:
+                    external_id = str(job["id"]) if "id" in job else None
+                    external_url = job.get("url") or job.get("absolute_url", "")
+                    if not external_url and external_id:
+                        external_url = f"https://careers.kenya-airways.com/jobs/{external_id}"
 
-                if not external_url:
+                    if not external_url:
+                        logger.debug("Skipping listing with no URL: external_id=%s", external_id)
+                        continue
+
+                    yield RawListing(
+                        external_id=external_id,
+                        external_url=external_url,
+                        title=job.get("title"),
+                        raw_json=job,
+                        company_name=config.name,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Skipping malformed Kenya Airways listing on page %d",
+                        page,
+                        exc_info=True,
+                    )
                     continue
-
-                yield RawListing(
-                    external_id=external_id,
-                    external_url=external_url,
-                    title=job.get("title"),
-                    raw_json=job,
-                    company_name=config.name,
-                )
 
             if len(jobs) < limit:
                 break
             offset += limit
             page += 1
             if page >= MAX_PAGES:
+                logger.warning(
+                    "Reached MAX_PAGES (%d) for source %s — results may be truncated",
+                    MAX_PAGES,
+                    config.slug,
+                )
                 break
 
     async def fetch_detail(self, listing: RawListing, config: SourceConfig) -> RawListing:
@@ -106,8 +121,7 @@ class KenyaAirwaysAdapter(APIAdapter):
         if listing.external_id is None:
             return listing
 
-        base = config.base_url.rstrip("/")
-        url = f"{base}/careers/api/v2/jobs/{listing.external_id}"
+        url = f"{CAREERS_API}/jobs/{listing.external_id}"
         data: dict[str, Any] = await self._get(url)
 
         return listing.model_copy(

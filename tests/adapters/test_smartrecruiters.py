@@ -166,6 +166,39 @@ class TestFetchListings:
 
         assert len(listings) == 0
 
+    @respx.mock
+    async def test_skips_malformed_posting(self) -> None:
+        """Adapter should skip malformed postings and continue."""
+        response = {
+            "content": [
+                {
+                    "id": "good-1",
+                    "name": "Valid Job",
+                    "company": {"name": "Corp"},
+                    "location": {"city": "Nairobi", "country": "Kenya"},
+                    "releasedDate": "2024-01-01",
+                },
+                None,
+                {
+                    "id": "good-2",
+                    "name": "Another Job",
+                    "company": {"name": "Corp2"},
+                    "location": {"city": "Mombasa", "country": "Kenya"},
+                    "releasedDate": "2024-02-01",
+                },
+            ],
+            "totalFound": 3,
+            "offset": 0,
+            "limit": DEFAULT_LIMIT,
+        }
+        respx.get(POSTINGS_URL).mock(
+            return_value=httpx.Response(200, json=response),
+        )
+        adapter = SmartRecruitersAdapter(request_delay=0)
+        listings = [listing async for listing in adapter.fetch_listings(_make_config())]
+
+        assert len(listings) == 2
+
 
 class TestFetchDetail:
     @respx.mock
