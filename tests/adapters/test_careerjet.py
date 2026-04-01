@@ -154,6 +154,40 @@ class TestFetchListings:
         assert len(listings) == 1
         assert listings[0].title == "Has URL"
 
+    async def test_skips_malformed_listing(self) -> None:
+        """Adapter should skip bad listings and continue."""
+        response: dict[str, Any] = {
+            "jobs": [
+                {
+                    "title": "Good Job",
+                    "url": "https://www.careerjet.co.ke/job/1",
+                    "company": "Corp",
+                    "description": "Desc",
+                    "date": "2024-01-01",
+                    "locations": "Nairobi",
+                    "salary": "100K",
+                    "site": "example.com",
+                },
+                None,  # type: ignore[list-item]  # Malformed entry
+                {
+                    "title": "Another Job",
+                    "url": "https://www.careerjet.co.ke/job/2",
+                    "company": "Corp2",
+                    "description": "Desc2",
+                    "date": "2024-01-02",
+                    "locations": "Mombasa",
+                    "salary": "",
+                    "site": "example2.com",
+                },
+            ]
+        }
+        mock_mod = _mock_careerjet_module(response)
+        with patch.dict("sys.modules", {"careerjet_api": mock_mod}):
+            adapter = CareerjetAdapter(request_delay=0)
+            listings = [listing async for listing in adapter.fetch_listings(_make_config())]
+
+        assert len(listings) == 2
+
     async def test_passes_search_params(self) -> None:
         mock_mod = _mock_careerjet_module({"jobs": []})
         with patch.dict("sys.modules", {"careerjet_api": mock_mod}):
@@ -166,6 +200,34 @@ class TestFetchListings:
         assert params["affid"] == "test123"
         assert params["location"] == "Kenya"
         assert params["pagesize"] == DEFAULT_PAGESIZE
+
+    async def test_user_ip_from_config(self) -> None:
+        config = SourceConfig(
+            name="Careerjet Kenya",
+            slug="careerjet-kenya",
+            adapter="careerjet",
+            source_type=SourceType.API,
+            base_url="https://www.careerjet.co.ke",
+            config={"affid": "test123", "location": "Kenya", "user_ip": "192.168.1.1"},
+        )
+        mock_mod = _mock_careerjet_module({"jobs": []})
+        with patch.dict("sys.modules", {"careerjet_api": mock_mod}):
+            adapter = CareerjetAdapter(request_delay=0)
+            _ = [listing async for listing in adapter.fetch_listings(config)]
+
+        client = mock_mod.CareerjetAPIClient.return_value
+        params = client.search.call_args[0][0]
+        assert params["user_ip"] == "192.168.1.1"
+
+    async def test_user_ip_default(self) -> None:
+        mock_mod = _mock_careerjet_module({"jobs": []})
+        with patch.dict("sys.modules", {"careerjet_api": mock_mod}):
+            adapter = CareerjetAdapter(request_delay=0)
+            _ = [listing async for listing in adapter.fetch_listings(_make_config())]
+
+        client = mock_mod.CareerjetAPIClient.return_value
+        params = client.search.call_args[0][0]
+        assert params["user_ip"] == "0.0.0.0"
 
     async def test_sdk_initialized_with_locale(self) -> None:
         mock_mod = _mock_careerjet_module({"jobs": []})

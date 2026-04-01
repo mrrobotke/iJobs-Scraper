@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_PAGESIZE = 99
 DEFAULT_LOCATION = "Kenya"
 DEFAULT_LOCALE = "en_KE"
+MAX_PAGES = 200
 
 
 @AdapterRegistry.register("careerjet")
@@ -88,7 +89,7 @@ class CareerjetAdapter(APIAdapter):
                 "page": page,
                 "pagesize": DEFAULT_PAGESIZE,
                 "affid": affid,
-                "user_ip": "1.0.0.0",
+                "user_ip": config.config.get("user_ip", "0.0.0.0"),
                 "user_agent": "ijobs-scraper/0.1.0",
                 "url": config.base_url,
             }
@@ -122,6 +123,8 @@ class CareerjetAdapter(APIAdapter):
             if len(jobs) < DEFAULT_PAGESIZE:
                 break
             page += 1
+            if page >= MAX_PAGES:
+                break
 
     def can_handle_url(self, url: str) -> bool:
         """Check if this URL belongs to Careerjet.

@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
 CAREERS_API = "https://api-irec-prod.kenya-airways.com/careers/api/v2"
 DEFAULT_LIMIT = 50
+MAX_PAGES = 200
 
 
 @AdapterRegistry.register("kenya_airways")
@@ -53,6 +54,7 @@ class KenyaAirwaysAdapter(APIAdapter):
         url = f"{base}/careers/api/v2/jobs"
         offset = 0
         limit = DEFAULT_LIMIT
+        page = 0
 
         while True:
             data: dict[str, Any] = await self._get(url, params={"offset": offset, "limit": limit})
@@ -67,6 +69,9 @@ class KenyaAirwaysAdapter(APIAdapter):
                 if not external_url and external_id:
                     external_url = f"https://careers.kenya-airways.com/jobs/{external_id}"
 
+                if not external_url:
+                    continue
+
                 yield RawListing(
                     external_id=external_id,
                     external_url=external_url,
@@ -78,6 +83,9 @@ class KenyaAirwaysAdapter(APIAdapter):
             if len(jobs) < limit:
                 break
             offset += limit
+            page += 1
+            if page >= MAX_PAGES:
+                break
 
     async def fetch_detail(self, listing: RawListing, config: SourceConfig) -> RawListing:
         """Fetch full job details from the iRec API.

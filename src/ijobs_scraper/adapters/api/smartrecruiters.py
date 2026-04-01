@@ -17,6 +17,7 @@ Example::
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from ijobs_scraper._registry import AdapterRegistry
@@ -26,6 +27,7 @@ from ijobs_scraper.models import RawListing, SourceConfig
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+logger = logging.getLogger(__name__)
 
 DEFAULT_LIMIT = 100
 
@@ -68,16 +70,20 @@ class SmartRecruitersAdapter(APIAdapter):
             total_found: int = data.get("totalFound", 0)
 
             for posting in postings:
-                posting_id = str(posting["id"])
-                external_url = f"https://jobs.smartrecruiters.com/{company_slug}/{posting_id}"
+                try:
+                    posting_id = str(posting["id"])
+                    external_url = f"https://jobs.smartrecruiters.com/{company_slug}/{posting_id}"
 
-                yield RawListing(
-                    external_id=posting_id,
-                    external_url=external_url,
-                    title=posting.get("name"),
-                    raw_json=posting,
-                    company_name=config.name,
-                )
+                    yield RawListing(
+                        external_id=posting_id,
+                        external_url=external_url,
+                        title=posting.get("name"),
+                        raw_json=posting,
+                        company_name=config.name,
+                    )
+                except Exception:
+                    logger.warning("Skipping malformed posting", exc_info=True)
+                    continue
 
             offset += len(postings)
             if not postings or offset >= total_found:

@@ -214,6 +214,33 @@ class TestFetchListings:
         assert len(listings) == 0
 
     @respx.mock
+    async def test_skips_malformed_item(self) -> None:
+        """Malformed items should be skipped, not crash the batch."""
+        response: dict[str, Any] = {
+            "totalCount": 2,
+            "data": [
+                {
+                    "id": "1001",
+                    "fields": {
+                        "title": "Good Job",
+                        "body-html": "<p>OK</p>",
+                        "url": "https://reliefweb.int/job/1001",
+                        "source": [{"name": "UNICEF"}],
+                        "date": {"created": "2024-01-01T00:00:00+00:00"},
+                        "country": [{"name": "Kenya"}],
+                    },
+                },
+                {"id": "1002", "fields": None},  # Malformed: fields is None
+            ],
+        }
+        respx.get(JOBS_URL).mock(return_value=httpx.Response(200, json=response))
+        adapter = ReliefWebAdapter(request_delay=0)
+        listings = [listing async for listing in adapter.fetch_listings(_make_config())]
+
+        assert len(listings) == 1
+        assert listings[0].external_id == "1001"
+
+    @respx.mock
     async def test_falls_back_to_config_name(self) -> None:
         """When source list is empty, use config.name as company."""
         response: dict[str, Any] = {
