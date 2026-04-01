@@ -7,9 +7,10 @@ structured, validated job data via JSON schema enforcement.
 from __future__ import annotations
 
 import json
-import re
 from datetime import datetime
 from typing import Any
+
+from bs4 import BeautifulSoup
 
 from ijobs_scraper.dedup import compute_content_hash
 from ijobs_scraper.exceptions import EnrichmentError
@@ -106,6 +107,13 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
                         "items": {"type": "string"},
                     },
                 },
+                "required": [
+                    "education_level",
+                    "min_years_experience",
+                    "certifications",
+                    "languages",
+                ],
+                "additionalProperties": False,
             },
             "posted_at": {"type": ["string", "null"]},
             "expires_at": {"type": ["string", "null"]},
@@ -113,8 +121,6 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
         "additionalProperties": False,
     },
 }
-
-_HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
 def clean_content(raw: RawListing) -> str:
@@ -125,9 +131,8 @@ def clean_content(raw: RawListing) -> str:
     if raw.raw_json is not None:
         text = json.dumps(raw.raw_json, indent=2, default=str)
     elif raw.raw_html is not None:
-        text = _HTML_TAG_RE.sub(" ", raw.raw_html)
-        # Collapse whitespace
-        text = re.sub(r"\s+", " ", text).strip()
+        soup = BeautifulSoup(raw.raw_html, "lxml")
+        text = " ".join(soup.get_text(separator=" ", strip=True).split())
     elif raw.raw_text is not None:
         text = raw.raw_text
     else:

@@ -73,49 +73,70 @@ class ScraperEngine:
             extra={"source_slug": source.slug, "adapter": source.adapter},
         )
 
-        async for listing in adapter.fetch_listings(source):
-            result.jobs_found += 1
+        try:
+            async for listing in adapter.fetch_listings(source):
+                result.jobs_found += 1
 
-            # Layer 1: source URL uniqueness
-            if self._dedup_enabled and is_known_url(listing.external_url, known_urls):
-                result.jobs_duplicated += 1
-                continue
-
-            try:
-                # Fetch full details if needed
-                listing = await adapter.fetch_detail(listing, source)
-
-                # Enrich via AI
-                enriched = await enrich(listing, source, self._ai_provider)
-
-                # Layer 2: cross-source content hash dedup
-                if (
-                    self._dedup_enabled
-                    and self._storage
-                    and await self._storage.check_content_hash(enriched.content_hash)
-                ):
+                # Layer 1: source URL uniqueness
+                if self._dedup_enabled and is_known_url(listing.external_url, known_urls):
                     result.jobs_duplicated += 1
-                    await self._storage.mark_duplicate(source.slug, listing, enriched.content_hash)
                     continue
 
-                # Persist raw listing
-                if self._storage:
-                    await self._storage.save_raw_listing(source.slug, listing)
+                try:
+                    # Fetch full details if needed
+                    listing = await adapter.fetch_detail(listing, source)
 
-                # Emit enriched job via callback
-                if self._on_job:
-                    await self._on_job(enriched, source, listing)
+                    # Enrich via AI
+                    enriched = await enrich(listing, source, self._ai_provider)
 
-                result.jobs_created += 1
+                    # Layer 2: cross-source content hash dedup
+                    if (
+                        self._dedup_enabled
+                        and self._storage
+                        and await self._storage.check_content_hash(enriched.content_hash)
+                    ):
+                        result.jobs_duplicated += 1
+                        await self._storage.mark_duplicate(
+                            source.slug, listing, enriched.content_hash
+                        )
+                        continue
 
-            except Exception as exc:
-                result.jobs_failed += 1
-                result.errors.append(f"{listing.external_url}: {exc}")
-                self._log.warning(
-                    "listing_failed",
-                    extra={"source_slug": source.slug, "external_url": listing.external_url},
-                    exc_info=exc,
-                )
+                    # Persist raw listing
+                    if self._storage:
+                        await self._storage.save_raw_listing(source.slug, listing)
+
+                    # Emit enriched job via callback
+                    if self._on_job:
+                        await self._on_job(enriched, source, listing)
+
+                    result.jobs_created += 1
+
+                except Exception as exc:
+                    result.jobs_failed += 1
+                    result.errors.append(f"{listing.external_url}: {exc}")
+                    self._log.warning(
+                        "listing_failed",
+                        extra={
+                            "source_slug": source.slug,
+                            "external_url": listing.external_url,
+                        },
+                        exc_info=exc,
+                    )
+
+        except Exception as exc:
+            result.status = "failed"
+            result.errors.append(f"Adapter fetch_listings failed: {exc}")
+            self._log.error(
+                "scrape_source_failed",
+                extra={"source_slug": source.slug, "adapter": source.adapter},
+                exc_info=exc,
+            )
+            result.completed_at = datetime.now(UTC)
+            return result
+
+        finally:
+            if hasattr(adapter, "close"):
+                await adapter.close()
 
         result.status = "completed" if not result.errors else "partial"
         result.completed_at = datetime.now(UTC)
@@ -152,17 +173,21 @@ class ScraperEngine:
             raise AdapterError("auto", f"No adapter found for URL: {url}", retryable=False)
 
         adapter = adapter_cls()
-        source = SourceConfig(
-            name="manual",
-            slug="manual",
-            adapter=hint or "auto",
-            source_type=SourceType.HTML,
-            base_url=url,
-        )
+        try:
+            source = SourceConfig(
+                name="manual",
+                slug="manual",
+                adapter=hint or "auto",
+                source_type=SourceType.HTML,
+                base_url=url,
+            )
 
-        listing = RawListing(external_url=url)
-        listing = await adapter.fetch_detail(listing, source)
-        return await enrich(listing, source, self._ai_provider)
+            listing = RawListing(external_url=url)
+            listing = await adapter.fetch_detail(listing, source)
+            return await enrich(listing, source, self._ai_provider)
+        finally:
+            if hasattr(adapter, "close"):
+                await adapter.close()
 
     async def scrape_all(self, sources: list[SourceConfig]) -> list[ScrapeResult]:
         """Scrape multiple sources sequentially.
@@ -186,4 +211,4 @@ class ScraperEngine:
             name: Name to register the adapter under.
             adapter_class: The adapter class to register.
         """
-        AdapterRegistry._adapters[name] = adapter_class
+        AdapterRegistry.register(name)(adapter_class)

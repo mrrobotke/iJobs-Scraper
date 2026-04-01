@@ -39,9 +39,9 @@ class StorageBackend(Protocol):
         ...
 
     async def mark_duplicate(
-        self, source_slug: str, listing: RawListing, existing_url: str
+        self, source_slug: str, listing: RawListing, content_hash: str
     ) -> None:
-        """Record that this listing is a duplicate."""
+        """Record that this listing is a duplicate (identified by content hash)."""
         ...
 
     async def check_content_hash(self, content_hash: str) -> bool:

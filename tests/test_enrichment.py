@@ -72,13 +72,16 @@ class TestCleanContent:
         content = clean_content(listing)
         assert len(content) == 15_000
 
-    def test_html_whitespace_collapse(self) -> None:
+    def test_html_tag_stripping(self) -> None:
         listing = RawListing(
             external_url="https://example.com/job/1",
-            raw_html="<p>  Lots   of    space  </p>",
+            raw_html="<p>Hello</p><div>World</div>",
         )
         content = clean_content(listing)
-        assert "  " not in content
+        assert "<p>" not in content
+        assert "<div>" not in content
+        assert "Hello" in content
+        assert "World" in content
 
 
 class TestEnrich:

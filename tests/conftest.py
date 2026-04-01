@@ -59,9 +59,9 @@ class StubStorageBackend:
         self.saved_listings.append((source_slug, listing))
 
     async def mark_duplicate(
-        self, source_slug: str, listing: RawListing, existing_url: str
+        self, source_slug: str, listing: RawListing, content_hash: str
     ) -> None:
-        self.duplicates.append((source_slug, listing, existing_url))
+        self.duplicates.append((source_slug, listing, content_hash))
 
     async def check_content_hash(self, content_hash: str) -> bool:
         return content_hash in self.content_hashes

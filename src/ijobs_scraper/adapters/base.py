@@ -165,6 +165,7 @@ class BrowserAdapter(BaseAdapter):
     def __init__(self, page_timeout: float = 30.0, nav_delay: float = 3.0) -> None:
         self._page_timeout = page_timeout
         self._nav_delay = nav_delay
+        self._pw: Any = None
         self._browser: Any = None
         self._context: Any = None
 
@@ -179,8 +180,8 @@ class BrowserAdapter(BaseAdapter):
                 retryable=False,
             ) from exc
 
-        pw = await async_playwright().start()
-        self._browser = await pw.chromium.launch(headless=True)
+        self._pw = await async_playwright().start()
+        self._browser = await self._pw.chromium.launch(headless=True)
         self._context = await self._browser.new_context()
         page: Any = await self._context.new_page()
         page.set_default_timeout(self._page_timeout * 1000)
@@ -199,3 +200,6 @@ class BrowserAdapter(BaseAdapter):
         if self._browser is not None:
             await self._browser.close()
             self._browser = None
+        if self._pw is not None:
+            await self._pw.stop()
+            self._pw = None

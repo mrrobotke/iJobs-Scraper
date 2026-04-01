@@ -7,11 +7,14 @@ host application's responsibility.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 from croniter import croniter
 
 from ijobs_scraper.models import SourceConfig
+
+_log = logging.getLogger("ijobs_scraper")
 
 
 def get_due_sources(
@@ -40,8 +43,16 @@ def get_due_sources(
             due.append(source)
             continue
 
-        cron = croniter(source.cron_schedule, last)
-        next_run: datetime = cron.get_next(datetime)
+        try:
+            cron = croniter(source.cron_schedule, last)
+            next_run: datetime = cron.get_next(datetime)
+        except (ValueError, KeyError):
+            _log.warning(
+                "invalid_cron_expression",
+                extra={"source_slug": source.slug, "cron": source.cron_schedule},
+            )
+            continue
+
         if next_run <= now:
             due.append(source)
 
