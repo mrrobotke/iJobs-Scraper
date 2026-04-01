@@ -285,6 +285,35 @@ class TestFetchListings:
         assert len(listings) == 1
         assert listings[0].external_url == "https://reliefweb.int/job/777"
 
+    @respx.mock
+    async def test_max_pages_cap(self) -> None:
+        """Adapter should stop after MAX_PAGES even if totalCount says more exist."""
+        from ijobs_scraper.adapters.api.reliefweb import DEFAULT_LIMIT
+
+        page_response: dict[str, Any] = {
+            "totalCount": 99999,
+            "data": [
+                {
+                    "id": str(i),
+                    "fields": {
+                        "title": f"Job {i}",
+                        "url": f"https://reliefweb.int/job/{i}",
+                        "source": [{"name": "OCHA"}],
+                    },
+                }
+                for i in range(DEFAULT_LIMIT)
+            ],
+        }
+        route = respx.get(JOBS_URL).mock(
+            return_value=httpx.Response(200, json=page_response),
+        )
+        with patch("ijobs_scraper.adapters.api.reliefweb.MAX_PAGES", 2):
+            adapter = ReliefWebAdapter(request_delay=0)
+            listings = [listing async for listing in adapter.fetch_listings(_make_config())]
+
+        assert len(listings) == DEFAULT_LIMIT * 2
+        assert route.call_count == 2
+
 
 class TestFetchDetail:
     @respx.mock

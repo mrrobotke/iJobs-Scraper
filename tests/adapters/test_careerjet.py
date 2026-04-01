@@ -52,6 +52,17 @@ MOCK_SEARCH_RESPONSE: dict[str, Any] = {
     ],
 }
 
+MOCK_JOB: dict[str, Any] = {
+    "title": "Software Engineer",
+    "company": "Tech Corp",
+    "url": "https://www.careerjet.co.ke/job/123",
+    "description": "Build great software.",
+    "date": "2024-01-15",
+    "locations": "Nairobi, Kenya",
+    "salary": "KES 100,000 - 150,000",
+    "site": "techcorp.com",
+}
+
 
 def _mock_careerjet_module(
     search_results: list[dict[str, Any]] | dict[str, Any],
@@ -236,6 +247,58 @@ class TestFetchListings:
             _ = [listing async for listing in adapter.fetch_listings(_make_config())]
 
         mock_mod.CareerjetAPIClient.assert_called_once_with("en_KE")
+
+    async def test_raises_on_sdk_error_response(self) -> None:
+        """SDK error responses should raise AdapterError with retryable=True."""
+        error_result: dict[str, Any] = {"type": "error", "error": "Invalid affiliate ID"}
+        mock_mod = _mock_careerjet_module(error_result)
+        with patch.dict("sys.modules", {"careerjet_api": mock_mod}):
+            adapter = CareerjetAdapter(request_delay=0)
+            with pytest.raises(AdapterError) as exc_info:
+                async for _ in adapter.fetch_listings(_make_config()):
+                    pass
+            assert exc_info.value.retryable is True
+            assert "Invalid affiliate ID" in str(exc_info.value)
+
+    async def test_uses_to_thread_for_sdk_call(self) -> None:
+        """SDK call must go through asyncio.to_thread to avoid blocking event loop."""
+        import asyncio
+
+        mock_mod = _mock_careerjet_module(MOCK_SEARCH_RESPONSE)
+        with (
+            patch.dict("sys.modules", {"careerjet_api": mock_mod}),
+            patch("asyncio.to_thread", wraps=asyncio.to_thread) as mock_to_thread,
+        ):
+            adapter = CareerjetAdapter(request_delay=0)
+            _ = [listing async for listing in adapter.fetch_listings(_make_config())]
+        assert mock_to_thread.called
+
+    async def test_max_pages_cap(self) -> None:
+        """Adapter should stop after MAX_PAGES even if SDK returns full pages."""
+        full_page_jobs: list[dict[str, Any]] = [MOCK_JOB for _ in range(DEFAULT_PAGESIZE)]
+        mock_mod = _mock_careerjet_module({"jobs": full_page_jobs})
+        with (
+            patch.dict("sys.modules", {"careerjet_api": mock_mod}),
+            patch("ijobs_scraper.adapters.api.careerjet.MAX_PAGES", 3),
+        ):
+            adapter = CareerjetAdapter(request_delay=0)
+            listings = [listing async for listing in adapter.fetch_listings(_make_config())]
+        assert len(listings) == DEFAULT_PAGESIZE * 2
+
+
+class TestFetchDetail:
+    async def test_returns_listing_unchanged(self) -> None:
+        """Careerjet has no detail endpoint; listing passes through."""
+        from ijobs_scraper.models import RawListing
+
+        adapter = CareerjetAdapter(request_delay=0)
+        listing = RawListing(
+            external_url="https://www.careerjet.co.ke/job/123",
+            title="Test Job",
+            company_name="Corp",
+        )
+        result = await adapter.fetch_detail(listing, _make_config())
+        assert result is listing
 
 
 class TestCanHandleUrl:

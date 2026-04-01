@@ -50,7 +50,8 @@ class ReliefWebAdapter(APIAdapter):
 
     ReliefWeb is the UN OCHA humanitarian information portal. The jobs
     API returns listings filtered by country with pagination via
-    ``offset`` and ``limit`` parameters.
+    ``offset`` and ``limit`` parameters. The Kenya country filter is
+    currently hardcoded in the query parameters.
 
     Config keys:
         appname: Registered application name for API access (required).
@@ -67,7 +68,7 @@ class ReliefWebAdapter(APIAdapter):
         """
         base = config.base_url.rstrip("/")
         url = f"{base}/v1/jobs"
-        appname: str = config.config["appname"]
+        appname = self._require_config(config, "appname")
         offset = 0
         page = 0
 
@@ -82,6 +83,13 @@ class ReliefWebAdapter(APIAdapter):
             }
 
             data: dict[str, Any] = await self._get(url, params=params)
+
+            if "data" not in data:
+                logger.warning(
+                    "ReliefWeb response missing 'data' key, keys: %s, source: %s",
+                    list(data.keys()),
+                    config.slug,
+                )
 
             items: list[dict[str, Any]] = data.get("data", [])
             if not items:
@@ -118,7 +126,7 @@ class ReliefWebAdapter(APIAdapter):
                     )
                     continue
 
-            total_count: int = data.get("totalCount", 0)
+            total_count = int(data.get("totalCount", 0))
             offset += DEFAULT_LIMIT
             page += 1
             if offset >= total_count:
@@ -145,14 +153,19 @@ class ReliefWebAdapter(APIAdapter):
             The listing with full body HTML populated.
         """
         if listing.raw_html:
+            logger.debug("Detail already present for %s", listing.external_url)
             return listing
 
         if listing.external_id is None:
+            logger.debug(
+                "Cannot fetch detail: no external_id for %s",
+                listing.external_url,
+            )
             return listing
 
         base = config.base_url.rstrip("/")
         url = f"{base}/v1/jobs/{listing.external_id}"
-        appname: str = config.config["appname"]
+        appname = self._require_config(config, "appname")
 
         params: dict[str, Any] = {
             "appname": appname,
@@ -162,6 +175,10 @@ class ReliefWebAdapter(APIAdapter):
 
         items: list[dict[str, Any]] = data.get("data", [])
         if not items:
+            logger.warning(
+                "ReliefWeb returned no data for job %s",
+                listing.external_id,
+            )
             return listing
 
         fields: dict[str, Any] = items[0].get("fields", {})

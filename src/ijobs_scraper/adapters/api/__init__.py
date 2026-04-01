@@ -1,4 +1,4 @@
-"""API-based adapters using httpx."""
+"""API-based adapters for REST and SDK-based job portal sources."""
 
 from ijobs_scraper.adapters.api.careerjet import CareerjetAdapter
 from ijobs_scraper.adapters.api.greenhouse import GreenhouseAdapter

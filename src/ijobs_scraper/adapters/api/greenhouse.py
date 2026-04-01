@@ -17,6 +17,7 @@ Example::
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from ijobs_scraper._registry import AdapterRegistry
@@ -25,6 +26,8 @@ from ijobs_scraper.models import RawListing, SourceConfig
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+
+logger = logging.getLogger(__name__)
 
 
 BOARDS_API = "https://boards-api.greenhouse.io/v1/boards"
@@ -50,7 +53,7 @@ class GreenhouseAdapter(APIAdapter):
         Yields:
             A ``RawListing`` for each job on the board.
         """
-        board_token: str = config.config["board_token"]
+        board_token = self._require_config(config, "board_token")
         url = f"{BOARDS_API}/{board_token}/jobs"
 
         data: dict[str, Any] = await self._get(url, params={"content": "true"})
@@ -79,10 +82,15 @@ class GreenhouseAdapter(APIAdapter):
             The listing with ``raw_json`` populated with full job data.
         """
         if listing.raw_json and "content" in listing.raw_json:
+            logger.debug("Detail already present for %s", listing.external_url)
             return listing
 
-        board_token: str = config.config["board_token"]
+        board_token = self._require_config(config, "board_token")
         if listing.external_id is None:
+            logger.debug(
+                "Cannot fetch detail: no external_id for %s",
+                listing.external_url,
+            )
             return listing
 
         url = f"{BOARDS_API}/{board_token}/jobs/{listing.external_id}"

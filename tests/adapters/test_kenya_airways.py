@@ -157,6 +157,31 @@ class TestFetchListings:
         assert len(listings) == 1
         assert listings[0].external_url == "https://careers.kenya-airways.com/jobs/9999"
 
+    @respx.mock
+    async def test_max_pages_cap(self) -> None:
+        """Adapter should stop after MAX_PAGES even if more pages exist."""
+        from unittest.mock import patch
+
+        full_page = {
+            "jobs": [
+                {
+                    "id": i,
+                    "title": f"Job {i}",
+                    "url": f"https://careers.kenya-airways.com/jobs/{i}",
+                }
+                for i in range(DEFAULT_LIMIT)
+            ]
+        }
+        route = respx.get(JOBS_URL).mock(
+            return_value=httpx.Response(200, json=full_page),
+        )
+        with patch("ijobs_scraper.adapters.api.kenya_airways.MAX_PAGES", 2):
+            adapter = KenyaAirwaysAdapter(request_delay=0)
+            listings = [listing async for listing in adapter.fetch_listings(_make_config())]
+
+        assert len(listings) == DEFAULT_LIMIT * 2
+        assert route.call_count == 2
+
 
 class TestFetchDetail:
     @respx.mock

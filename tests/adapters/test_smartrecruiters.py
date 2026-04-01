@@ -199,6 +199,27 @@ class TestFetchListings:
 
         assert len(listings) == 2
 
+    @respx.mock
+    async def test_max_pages_cap(self) -> None:
+        """Adapter should stop after MAX_PAGES even if totalFound says more exist."""
+        from unittest.mock import patch
+
+        page_response = {
+            "content": [{"id": f"job-{i}", "name": f"Job {i}"} for i in range(DEFAULT_LIMIT)],
+            "totalFound": 99999,
+            "offset": 0,
+            "limit": DEFAULT_LIMIT,
+        }
+        route = respx.get(POSTINGS_URL).mock(
+            return_value=httpx.Response(200, json=page_response),
+        )
+        with patch("ijobs_scraper.adapters.api.smartrecruiters.MAX_PAGES", 2):
+            adapter = SmartRecruitersAdapter(request_delay=0)
+            listings = [listing async for listing in adapter.fetch_listings(_make_config())]
+
+        assert len(listings) == DEFAULT_LIMIT * 2
+        assert route.call_count == 2
+
 
 class TestFetchDetail:
     @respx.mock

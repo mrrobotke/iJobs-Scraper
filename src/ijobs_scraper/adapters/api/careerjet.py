@@ -51,6 +51,7 @@ class CareerjetAdapter(APIAdapter):
         keywords: Search keywords (optional, default ``""``).
         location: Location filter (optional, default ``"Kenya"``).
         locale: SDK locale code (optional, default ``"en_KE"``).
+        user_ip: Client IP for API requests (optional, default ``"0.0.0.0"``).
     """
 
     async def fetch_listings(self, config: SourceConfig) -> AsyncIterator[RawListing]:
@@ -74,7 +75,7 @@ class CareerjetAdapter(APIAdapter):
                 retryable=False,
             ) from exc
 
-        affid: str = config.config["affid"]
+        affid = self._require_config(config, "affid")
         keywords: str = config.config.get("keywords", "")
         location: str = config.config.get("location", DEFAULT_LOCATION)
         locale: str = config.config.get("locale", DEFAULT_LOCALE)

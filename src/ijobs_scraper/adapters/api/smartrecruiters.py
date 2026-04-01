@@ -57,7 +57,7 @@ class SmartRecruitersAdapter(APIAdapter):
         Yields:
             A ``RawListing`` for each posting.
         """
-        company_slug: str = config.config["company_slug"]
+        company_slug = self._require_config(config, "company_slug")
         base = config.base_url.rstrip("/")
         url = f"{base}/v1/companies/{company_slug}/postings"
         offset = 0
@@ -68,8 +68,15 @@ class SmartRecruitersAdapter(APIAdapter):
                 url, params={"offset": offset, "limit": DEFAULT_LIMIT}
             )
 
+            if "content" not in data:
+                logger.warning(
+                    "SmartRecruiters response missing 'content' key, keys: %s, source: %s",
+                    list(data.keys()),
+                    config.slug,
+                )
+
             postings = data.get("content", [])
-            total_found: int = data.get("totalFound", 0)
+            total_found = int(data.get("totalFound", 0))
 
             for posting in postings:
                 try:
@@ -113,12 +120,17 @@ class SmartRecruitersAdapter(APIAdapter):
             The listing with ``raw_json`` populated with full posting data.
         """
         if listing.raw_json and "jobAd" in listing.raw_json:
+            logger.debug("Detail already present for %s", listing.external_url)
             return listing
 
         if listing.external_id is None:
+            logger.debug(
+                "Cannot fetch detail: no external_id for %s",
+                listing.external_url,
+            )
             return listing
 
-        company_slug: str = config.config["company_slug"]
+        company_slug = self._require_config(config, "company_slug")
         base = config.base_url.rstrip("/")
         url = f"{base}/v1/companies/{company_slug}/postings/{listing.external_id}"
         data: dict[str, Any] = await self._get(url)

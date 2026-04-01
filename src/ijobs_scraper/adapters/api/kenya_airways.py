@@ -2,6 +2,8 @@
 
 Kenya Airways uses the iRec recruitment platform which exposes a public
 REST API returning full JSON job data with no authentication required.
+The ``base_url`` in :class:`SourceConfig` drives the API host so the
+adapter can be pointed at staging or alternative environments.
 
 Example::
 
@@ -29,6 +31,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 CAREERS_API = "https://api-irec-prod.kenya-airways.com/careers/api/v2"
+API_PATH = "/careers/api/v2"
 DEFAULT_LIMIT = 50
 MAX_PAGES = 200
 
@@ -39,26 +42,35 @@ class KenyaAirwaysAdapter(APIAdapter):
 
     The iRec platform provides a public JSON API with pagination support
     via ``offset`` and ``limit`` query parameters. No authentication
-    is required.
+    is required. The endpoint is built from ``config.base_url`` so the
+    adapter can target different environments.
     """
 
     async def fetch_listings(self, config: SourceConfig) -> AsyncIterator[RawListing]:
         """Fetch all job listings from Kenya Airways iRec API.
 
         Args:
-            config: Source configuration with ``base_url`` pointing to the
-                iRec API host.
+            config: Source configuration. ``base_url`` is the iRec API
+                host (e.g. ``"https://api-irec-prod.kenya-airways.com"``).
 
         Yields:
             A ``RawListing`` for each open position.
         """
-        url = f"{CAREERS_API}/jobs"
+        base = config.base_url.rstrip("/")
+        url = f"{base}{API_PATH}/jobs"
         offset = 0
         limit = DEFAULT_LIMIT
         page = 0
 
         while True:
             data: dict[str, Any] = await self._get(url, params={"offset": offset, "limit": limit})
+
+            if "jobs" not in data:
+                logger.warning(
+                    "Kenya Airways API response missing 'jobs' key, keys: %s, source: %s",
+                    list(data.keys()),
+                    config.slug,
+                )
 
             jobs = data.get("jobs", [])
             if not jobs:
@@ -110,18 +122,24 @@ class KenyaAirwaysAdapter(APIAdapter):
 
         Args:
             listing: The listing to enrich with full details.
-            config: Source configuration.
+            config: Source configuration. ``base_url`` is the iRec API host.
 
         Returns:
             The listing with ``raw_json`` populated with full job data.
         """
         if listing.raw_json and "description" in listing.raw_json:
+            logger.debug("Detail already present for %s", listing.external_url)
             return listing
 
         if listing.external_id is None:
+            logger.debug(
+                "Cannot fetch detail: no external_id for %s",
+                listing.external_url,
+            )
             return listing
 
-        url = f"{CAREERS_API}/jobs/{listing.external_id}"
+        base = config.base_url.rstrip("/")
+        url = f"{base}{API_PATH}/jobs/{listing.external_id}"
         data: dict[str, Any] = await self._get(url)
 
         return listing.model_copy(
