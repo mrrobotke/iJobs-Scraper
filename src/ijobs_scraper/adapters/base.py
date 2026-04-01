@@ -80,6 +80,35 @@ class APIAdapter(BaseAdapter):
         result: dict[str, Any] = resp.json()
         return result
 
+    def _require_config(self, config: SourceConfig, key: str) -> str:
+        """Extract a required string config value, raising AdapterError if missing.
+
+        Args:
+            config: The source configuration to read from.
+            key: The config key to look up in ``config.config``.
+
+        Returns:
+            The config value as a string.
+
+        Raises:
+            AdapterError: If the key is missing or not a string.
+        """
+        value = config.config.get(key)
+        if value is None:
+            raise AdapterError(
+                self.__class__.__name__,
+                f"Missing required config key '{key}'. "
+                f"Provide it in SourceConfig(config={{'{key}': '...'}})",
+                retryable=False,
+            )
+        if not isinstance(value, str):
+            raise AdapterError(
+                self.__class__.__name__,
+                f"Config key '{key}' must be a string, got {type(value).__name__}",
+                retryable=False,
+            )
+        return value
+
     async def _post(
         self,
         url: str,
