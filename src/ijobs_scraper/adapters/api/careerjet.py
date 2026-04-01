@@ -65,7 +65,7 @@ class CareerjetAdapter(APIAdapter):
             AdapterError: If ``careerjet-api`` is not installed.
         """
         try:
-            from careerjet_api import CareerjetAPIClient
+            from careerjet_api import CareerjetAPIClient  # type: ignore[import-untyped]
         except ImportError as exc:
             raise AdapterError(
                 "careerjet",
