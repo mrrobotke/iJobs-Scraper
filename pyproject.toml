@@ -76,3 +76,8 @@ source_pkgs = ["ijobs_scraper"]
 
 [tool.coverage.report]
 show_missing = true
+
+[dependency-groups]
+dev = [
+    "types-croniter>=6.2.2.20260316",
+]
