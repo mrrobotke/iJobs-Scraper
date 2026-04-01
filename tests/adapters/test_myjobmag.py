@@ -32,7 +32,7 @@ def _make_config() -> SourceConfig:
 
 LISTINGS_HTML = _load_fixture("myjobmag_listings.html")
 LISTINGS_HTML_NO_NEXT = LISTINGS_HTML.replace(
-    '<a href="/jobs?page=2" class="pagination__next">Next &raquo;</a>',
+    '<a href="/jobs?page=2" class="pagination__next">Next &raquo;</a>\n',
     "",
 )
 DETAIL_HTML = _load_fixture("myjobmag_detail.html")
@@ -48,21 +48,8 @@ EMPTY_HTML = """
 MALFORMED_HTML = """
 <html><body>
 <div class="job-list">
-    <ul class="job-list__items">
-        <li class="job-list__item">
-            <div class="job-info">
-                <h2 class="job-info__title"></h2>
-            </div>
-        </li>
-        <li class="job-list__item">
-            <div class="job-info">
-                <h2 class="job-info__title">
-                    <a href="/job/valid-job-999">Valid Job</a>
-                </h2>
-                <div class="job-info__company">Valid Corp</div>
-            </div>
-        </li>
-    </ul>
+    <a href="/job/">No</a>
+    <a href="/job/valid-job-999">Valid Job at Valid Corp</a>
 </div>
 </body></html>
 """
@@ -94,9 +81,9 @@ class TestFetchListings:
         listings = [listing async for listing in adapter.fetch_listings(_make_config())]
 
         first = listings[0]
-        assert first.title == "Accountant"
+        assert first.title == "Accountant at KPMG East Africa"
         assert first.external_url == f"{BASE_URL}/job/accountant-at-kpmg-200001"
-        assert first.company_name == "KPMG East Africa"
+        assert first.company_name == "MyJobMag Kenya"  # No company element in HTML
 
     @respx.mock
     async def test_empty_page(self) -> None:
@@ -117,7 +104,7 @@ class TestFetchListings:
         listings = [listing async for listing in adapter.fetch_listings(_make_config())]
 
         assert len(listings) == 1
-        assert listings[0].title == "Valid Job"
+        assert listings[0].title == "Valid Job at Valid Corp"
 
     @respx.mock
     async def test_pagination(self) -> None:

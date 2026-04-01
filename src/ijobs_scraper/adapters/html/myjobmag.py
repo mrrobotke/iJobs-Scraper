@@ -63,17 +63,16 @@ class MyJobMagAdapter(HTMLAdapter):
             params = {"page": str(page)} if page > 1 else None
             soup = await self._fetch_page(url, params=params)
 
-            items = soup.select(".job-list__item")
+            # Primary: anchor links to /job/ paths; fallback: .job-list__item
+            job_links = soup.select('a[href*="/job/"]')
+            items = [a for a in job_links if len(a.get_text(strip=True)) > 3]
+            if not items:
+                items = soup.select(".job-list__item .job-info__title a")
             if not items:
                 break
 
-            for item in items:
+            for title_el in items:
                 try:
-                    title_el = item.select_one(".job-info__title a")
-                    if title_el is None:
-                        logger.debug("Skipping entry with no title link on page %d", page)
-                        continue
-
                     title = title_el.get_text(strip=True)
                     href = title_el.get("href", "")
                     external_url = urljoin(base, str(href)) if href else ""
@@ -83,8 +82,7 @@ class MyJobMagAdapter(HTMLAdapter):
                         logger.debug("Skipping listing with no URL on page %d", page)
                         continue
 
-                    company_el = item.select_one(".job-info__company")
-                    company = company_el.get_text(strip=True) if company_el else config.name
+                    company = config.name
 
                     yield RawListing(
                         external_url=external_url,

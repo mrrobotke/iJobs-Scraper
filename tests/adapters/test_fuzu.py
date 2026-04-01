@@ -32,7 +32,7 @@ def _make_config() -> SourceConfig:
 
 LISTINGS_HTML = _load_fixture("fuzu_listings.html")
 LISTINGS_HTML_NO_NEXT = LISTINGS_HTML.replace(
-    '<a href="/kenya/jobs?page=2" class="pagination__next" rel="next">Next</a>',
+    '<a href="/kenya/jobs?page=2" rel="next">Next</a>',
     "",
 )
 DETAIL_HTML = _load_fixture("fuzu_detail.html")
@@ -48,17 +48,15 @@ EMPTY_HTML = """
 MALFORMED_HTML = """
 <html><body>
 <div class="jobs-container">
-    <div class="job-listings">
-        <div class="job-card" data-id="bad1">
-            <div class="job-card__company">No Link Corp</div>
-        </div>
-        <div class="job-card" data-id="good1">
-            <a href="/kenya/jobs/valid-job-good1" class="job-card__link">
-                <h3 class="job-card__title">Valid Job</h3>
-            </a>
-            <div class="job-card__company">Valid Corp</div>
-        </div>
-    </div>
+    <section class="job-list">
+        <a href="" class="b2c-card" data-id="bad1">
+            <h2>Empty Href Job</h2>
+        </a>
+        <a href="/kenya/jobs/valid-job-good1" class="b2c-card"
+           company_slug="valid-corp" data-id="good1">
+            <h2>Valid Job</h2>
+        </a>
+    </section>
 </div>
 </body></html>
 """
@@ -92,7 +90,7 @@ class TestFetchListings:
         first = listings[0]
         assert first.title == "Sales Representative"
         assert first.external_url == f"{BASE_URL}/kenya/jobs/sales-representative-400001"
-        assert first.company_name == "Unilever Kenya"
+        assert first.company_name == "unilever-kenya"
         assert first.external_id == "400001"
 
     @respx.mock

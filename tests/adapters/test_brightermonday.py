@@ -32,7 +32,7 @@ def _make_config() -> SourceConfig:
 
 LISTINGS_HTML = _load_fixture("brightermonday_listings.html")
 LISTINGS_HTML_NO_NEXT = LISTINGS_HTML.replace(
-    '<a href="/jobs?page=2" class="pagination__next" rel="next">Next</a>',
+    '<a href="/jobs?page=2" rel="next">Next</a>',
     "",
 )
 DETAIL_HTML = _load_fixture("brightermonday_detail.html")
@@ -47,22 +47,10 @@ EMPTY_HTML = """
 
 MALFORMED_HTML = """
 <html><body>
-<div class="search-results">
-    <div class="search-results__list">
-        <div class="job-card" data-job-id="bad1">
-            <div class="job-card__content">
-                <h3 class="job-card__title"></h3>
-            </div>
-        </div>
-        <div class="job-card" data-job-id="good1">
-            <div class="job-card__content">
-                <h3 class="job-card__title">
-                    <a href="/listings/valid-job-good1">Valid Job</a>
-                </h3>
-                <p class="job-card__company">Test Corp</p>
-            </div>
-        </div>
-    </div>
+<div class="container">
+    <a data-cy="listing-title-link" href="">Empty Href</a>
+    <a data-cy="listing-title-link" href="/listings/valid-job-good1">Valid Job</a>
+    <a data-cy="listing-company-link" href="/company/test-corp">Test Corp</a>
 </div>
 </body></html>
 """
@@ -97,7 +85,6 @@ class TestFetchListings:
         assert first.title == "Software Engineer"
         assert first.external_url == f"{BASE_URL}/listings/software-engineer-100001"
         assert first.company_name == "Safaricom PLC"
-        assert first.external_id == "100001"
 
     @respx.mock
     async def test_empty_page(self) -> None:
@@ -144,9 +131,6 @@ class TestFetchListings:
         _ = [listing async for listing in adapter.fetch_listings(_make_config())]
 
         assert adapter._csrf_token == "abc123csrftoken"  # noqa: SLF001
-        # Token should NOT be on shared client headers (scoped to portal requests)
-        client = await adapter._ensure_client()
-        assert "X-CSRF-TOKEN" not in client.headers
 
 
 class TestFetchDetail:

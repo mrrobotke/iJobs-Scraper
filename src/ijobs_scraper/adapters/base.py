@@ -175,11 +175,13 @@ class HTMLAdapter(BaseAdapter):
 
         Prevents SSRF by rejecting URLs with non-HTTP schemes or
         unexpected hosts that may have been injected via malicious
-        ``href`` attributes in scraped HTML.
+        ``href`` attributes in scraped HTML. Uses suffix matching
+        on the netloc to prevent spoofing via subdomains like
+        ``expected_host.evil.com``.
 
         Args:
             url: The URL to validate.
-            expected_host: A substring that must appear in the URL host
+            expected_host: The expected host suffix for the URL
                 (e.g. ``"brightermonday.co.ke"``).
 
         Returns:
@@ -191,7 +193,8 @@ class HTMLAdapter(BaseAdapter):
             return None
         if parsed.scheme not in ("http", "https"):
             return None
-        if expected_host not in (parsed.netloc or ""):
+        netloc = (parsed.netloc or "").split(":")[0]
+        if netloc != expected_host and not netloc.endswith("." + expected_host):
             return None
         return url
 

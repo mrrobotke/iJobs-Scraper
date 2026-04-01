@@ -63,21 +63,16 @@ class FuzuAdapter(HTMLAdapter):
             params = {"page": str(page)} if page > 1 else None
             soup = await self._fetch_page(url, params=params)
 
-            cards = soup.select(".job-card")
+            # Primary: styled card links in .job-list; fallback: .job-card
+            cards = soup.select(".job-list a.b2c-card")
+            if not cards:
+                cards = soup.select(".job-card .job-card__link")
             if not cards:
                 break
 
             for card in cards:
                 try:
-                    link = card.select_one(".job-card__link")
-                    if link is None:
-                        logger.debug("Skipping card with no link on page %d", page)
-                        continue
-
-                    title_el = card.select_one(".job-card__title")
-                    title = title_el.get_text(strip=True) if title_el else None
-
-                    href = link.get("href", "")
+                    href = card.get("href", "")
                     external_url = urljoin(base, str(href)) if href else ""
                     external_url = self._validate_url(external_url, _HOST) or ""
 
@@ -85,8 +80,18 @@ class FuzuAdapter(HTMLAdapter):
                         logger.debug("Skipping listing with no URL on page %d", page)
                         continue
 
+                    title_el = card.select_one("h2") or card.select_one(".job-card__title")
+                    title = title_el.get_text(strip=True) if title_el else None
+
+                    company_slug = card.get("company_slug")
                     company_el = card.select_one(".job-card__company")
-                    company = company_el.get_text(strip=True) if company_el else config.name
+                    company = (
+                        company_el.get_text(strip=True)
+                        if company_el
+                        else str(company_slug)
+                        if company_slug
+                        else config.name
+                    )
 
                     job_id = card.get("data-id")
                     external_id = str(job_id) if job_id else None
@@ -106,7 +111,7 @@ class FuzuAdapter(HTMLAdapter):
                     continue
 
             # Check for next page
-            next_link = soup.select_one(".pagination__next[rel='next']")
+            next_link = soup.select_one("a[rel='next']")
             if next_link is None:
                 break
 

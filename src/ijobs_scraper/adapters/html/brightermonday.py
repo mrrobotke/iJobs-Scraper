@@ -44,6 +44,10 @@ class BrighterMondayAdapter(HTMLAdapter):
     httpx client.
     """
 
+    def __init__(self, request_delay: float = 2.0, jitter: float = 1.0) -> None:
+        super().__init__(request_delay=request_delay, jitter=jitter)
+        self._csrf_token: str | None = None
+
     async def _extract_csrf_token(self, url: str) -> str | None:
         """Fetch a page and extract the CSRF token from meta tags.
 
@@ -88,17 +92,15 @@ class BrighterMondayAdapter(HTMLAdapter):
             params = {"page": str(page)} if page > 1 else None
             soup = await self._fetch_page(url, params=params)
 
-            cards = soup.select(".job-card")
+            cards = soup.select('a[data-cy="listing-title-link"]')
+            if not cards:
+                # Fallback for older layouts
+                cards = soup.select(".job-card .job-card__title a")
             if not cards:
                 break
 
-            for card in cards:
+            for title_link in cards:
                 try:
-                    title_link = card.select_one(".job-card__title a")
-                    if title_link is None:
-                        logger.debug("Skipping card with no title link on page %d", page)
-                        continue
-
                     title = title_link.get_text(strip=True)
                     href = title_link.get("href", "")
                     external_url = urljoin(base, str(href)) if href else ""
@@ -108,14 +110,21 @@ class BrighterMondayAdapter(HTMLAdapter):
                         logger.debug("Skipping listing with no valid URL on page %d", page)
                         continue
 
-                    company_el = card.select_one(".job-card__company")
+                    # Walk up to find card container, then look for company
+                    card = title_link.parent
+                    for _ in range(6):
+                        if card and card.parent:
+                            card = card.parent
+                        else:
+                            break
+                    company_el = None
+                    if card:
+                        company_el = card.select_one(
+                            'a[data-cy="listing-company-link"]'
+                        ) or card.select_one('a[href*="/company/"]')
                     company = company_el.get_text(strip=True) if company_el else config.name
 
-                    job_id = card.get("data-job-id")
-                    external_id = str(job_id) if job_id else None
-
                     yield RawListing(
-                        external_id=external_id,
                         external_url=external_url,
                         title=title,
                         company_name=company,
@@ -129,20 +138,11 @@ class BrighterMondayAdapter(HTMLAdapter):
                     continue
 
             # Check for next page
-            next_link = soup.select_one(".pagination__next[rel='next']")
+            next_link = soup.select_one("a[rel='next']")
             if next_link is None:
                 break
 
             page += 1
-
-    async def _fetch_page_with_csrf(self, url: str) -> None:
-        """Attach CSRF token header only for portal requests."""
-        client = await self._ensure_client()
-        token = getattr(self, "_csrf_token", None)
-        if token and _HOST in url:
-            client.headers["X-CSRF-TOKEN"] = token
-        elif "X-CSRF-TOKEN" in client.headers:
-            del client.headers["X-CSRF-TOKEN"]
 
     async def fetch_detail(self, listing: RawListing, config: SourceConfig) -> RawListing:
         """Fetch the full job detail page and populate ``raw_html``.
@@ -162,7 +162,6 @@ class BrighterMondayAdapter(HTMLAdapter):
             logger.warning("Rejecting detail URL outside expected host: %s", listing.external_url)
             return listing
 
-        await self._fetch_page_with_csrf(listing.external_url)
         soup = await self._fetch_page(listing.external_url)
         detail = soup.select_one(".job-details")
         html = str(detail) if detail else str(soup)
