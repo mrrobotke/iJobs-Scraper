@@ -21,6 +21,8 @@ import logging
 from typing import TYPE_CHECKING
 from urllib.parse import urljoin
 
+from bs4 import BeautifulSoup
+
 from ijobs_scraper._registry import AdapterRegistry
 from ijobs_scraper.adapters.base import HTMLAdapter
 from ijobs_scraper.models import RawListing, SourceConfig
@@ -48,16 +50,16 @@ class BrighterMondayAdapter(HTMLAdapter):
         super().__init__(request_delay=request_delay, jitter=jitter)
         self._csrf_token: str | None = None
 
-    async def _extract_csrf_token(self, url: str) -> str | None:
-        """Fetch a page and extract the CSRF token from meta tags.
+    @staticmethod
+    def _extract_csrf_token(soup: BeautifulSoup) -> str | None:
+        """Extract CSRF token from a parsed page's meta tags.
 
         Args:
-            url: The URL to fetch the CSRF token from.
+            soup: The parsed HTML page.
 
         Returns:
             The CSRF token string, or ``None`` if not found.
         """
-        soup = await self._fetch_page(url)
         meta = soup.find("meta", attrs={"name": "csrf-token"})
         if meta:
             content = meta.get("content")
@@ -82,15 +84,16 @@ class BrighterMondayAdapter(HTMLAdapter):
         base = config.base_url.rstrip("/")
         url = f"{base}/jobs"
 
-        # Fetch first page to establish session cookies and extract CSRF token
-        self._csrf_token = await self._extract_csrf_token(url)
-        if self._csrf_token:
-            logger.debug("Session initialized for %s", config.slug)
-
         page = 1
         while page <= MAX_PAGES:
             params = {"page": str(page)} if page > 1 else None
             soup = await self._fetch_page(url, params=params)
+
+            # Extract CSRF token from the first page response
+            if page == 1:
+                self._csrf_token = self._extract_csrf_token(soup)
+                if self._csrf_token:
+                    logger.debug("Session initialized for %s", config.slug)
 
             cards = soup.select('a[data-cy="listing-title-link"]')
             if not cards:
@@ -107,22 +110,19 @@ class BrighterMondayAdapter(HTMLAdapter):
                     external_url = self._validate_url(external_url, _HOST) or ""
 
                     if not external_url:
-                        logger.debug("Skipping listing with no valid URL on page %d", page)
+                        logger.debug(
+                            "Skipping listing with no valid URL on page %d",
+                            page,
+                        )
                         continue
 
-                    # Walk up to find card container, then look for company
-                    card = title_link.parent
-                    for _ in range(6):
-                        if card and card.parent:
-                            card = card.parent
-                        else:
-                            break
-                    company_el = None
-                    if card:
-                        company_el = card.select_one(
-                            'a[data-cy="listing-company-link"]'
-                        ) or card.select_one('a[href*="/company/"]')
-                    company = company_el.get_text(strip=True) if company_el else config.name
+                    # Find nearest sibling company link to this title
+                    company = config.name
+                    sibling = title_link.find_next("a", attrs={"data-cy": "listing-company-link"})
+                    if sibling is None:
+                        sibling = title_link.find_next("a", href=lambda h: h and "/company/" in h)
+                    if sibling:
+                        company = sibling.get_text(strip=True) or config.name
 
                     yield RawListing(
                         external_url=external_url,
@@ -175,6 +175,6 @@ class BrighterMondayAdapter(HTMLAdapter):
             url: The URL to check.
 
         Returns:
-            True if the URL contains the BrighterMonday domain.
+            True if the URL matches the BrighterMonday domain.
         """
-        return _HOST in url
+        return self._validate_url(url, _HOST) is not None

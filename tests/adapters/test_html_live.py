@@ -6,6 +6,7 @@ Run manually with: pytest tests/adapters/test_html_live.py -v -m live
 
 from __future__ import annotations
 
+import httpx
 import pytest
 
 from ijobs_scraper.adapters.html.brightermonday import BrighterMondayAdapter
@@ -89,8 +90,8 @@ class TestMyGovLive:
                 listings.append(listing)
                 if len(listings) >= 3:
                     break
-        except Exception:
-            pass  # Portal may be down or URL changed
+        except httpx.HTTPStatusError:
+            pass  # Portal may have removed /job-adverts (404)
         await adapter.close()
 
         # Just verify no crash — MyGov may have removed /job-adverts

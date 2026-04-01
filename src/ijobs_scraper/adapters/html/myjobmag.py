@@ -63,11 +63,16 @@ class MyJobMagAdapter(HTMLAdapter):
             params = {"page": str(page)} if page > 1 else None
             soup = await self._fetch_page(url, params=params)
 
-            # Primary: anchor links to /job/ paths; fallback: .job-list__item
-            job_links = soup.select('a[href*="/job/"]')
-            items = [a for a in job_links if len(a.get_text(strip=True)) > 3]
-            if not items:
-                items = soup.select(".job-list__item .job-info__title a")
+            # Primary: .job-item links; fallback: anchor links to /job/ slugs
+            item_list = list(soup.select(".job-item a[href*='/job/']"))
+            if not item_list:
+                item_list = [
+                    a
+                    for a in soup.select('a[href*="/job/"]')
+                    if a.get_text(strip=True)
+                    and len(str(a.get("href", ""))) > 5  # has slug after /job/
+                ]
+            items = item_list
             if not items:
                 break
 
@@ -137,4 +142,4 @@ class MyJobMagAdapter(HTMLAdapter):
         Returns:
             True if the URL contains the MyJobMag domain.
         """
-        return _HOST in url
+        return self._validate_url(url, _HOST) is not None

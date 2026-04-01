@@ -150,4 +150,4 @@ class FuzuAdapter(HTMLAdapter):
         Returns:
             True if the URL contains the Fuzu domain.
         """
-        return _HOST in url
+        return self._validate_url(url, _HOST) is not None

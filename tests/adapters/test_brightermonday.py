@@ -86,6 +86,10 @@ class TestFetchListings:
         assert first.external_url == f"{BASE_URL}/listings/software-engineer-100001"
         assert first.company_name == "Safaricom PLC"
 
+        # Verify each listing gets its own company (not cross-contaminated)
+        assert listings[1].company_name == "Equity Bank"
+        assert listings[2].company_name == "KCB Group"
+
     @respx.mock
     async def test_empty_page(self) -> None:
         respx.get(JOBS_URL).mock(
@@ -111,16 +115,15 @@ class TestFetchListings:
     async def test_pagination(self) -> None:
         route = respx.get(JOBS_URL)
         route.side_effect = [
-            httpx.Response(200, text=LISTINGS_HTML),  # CSRF extraction
-            httpx.Response(200, text=LISTINGS_HTML),  # page 1
+            httpx.Response(200, text=LISTINGS_HTML),  # page 1 (+ CSRF)
             httpx.Response(200, text=LISTINGS_HTML_NO_NEXT),  # page 2 (final)
         ]
         adapter = BrighterMondayAdapter(request_delay=0, jitter=0)
         listings = [listing async for listing in adapter.fetch_listings(_make_config())]
 
-        # 3 calls: first for CSRF, then page 1, then page 2
+        # 2 calls: page 1 (includes CSRF extraction), then page 2
         assert len(listings) == 6
-        assert route.call_count == 3
+        assert route.call_count == 2
 
     @respx.mock
     async def test_csrf_token_extracted(self) -> None:
