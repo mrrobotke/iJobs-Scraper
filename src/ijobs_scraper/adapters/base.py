@@ -42,6 +42,35 @@ class BaseAdapter(ABC):
         """Return True if this adapter can parse the given URL (for manual scraper)."""
         return False
 
+    @staticmethod
+    def _validate_url(url: str, expected_host: str) -> str | None:
+        """Validate that a URL uses HTTP(S) and matches the expected host.
+
+        Prevents SSRF by rejecting URLs with non-HTTP schemes or
+        unexpected hosts that may have been injected via malicious
+        ``href`` attributes in scraped HTML. Uses suffix matching
+        on the netloc to prevent spoofing via subdomains like
+        ``expected_host.evil.com``.
+
+        Args:
+            url: The URL to validate.
+            expected_host: The expected host suffix for the URL
+                (e.g. ``"brightermonday.co.ke"``).
+
+        Returns:
+            The URL if valid, or ``None`` if it fails validation.
+        """
+        try:
+            parsed = urlparse(url)
+        except ValueError:
+            return None
+        if parsed.scheme not in ("http", "https"):
+            return None
+        netloc = (parsed.netloc or "").split(":")[0]
+        if netloc != expected_host and not netloc.endswith("." + expected_host):
+            return None
+        return url
+
 
 class APIAdapter(BaseAdapter):
     """Base for REST API sources. Provides httpx client with rate limiting."""
@@ -186,35 +215,6 @@ class HTMLAdapter(BaseAdapter):
         if elapsed < delay:
             await asyncio.sleep(delay - elapsed)
         self._last_request_time = time.monotonic()
-
-    @staticmethod
-    def _validate_url(url: str, expected_host: str) -> str | None:
-        """Validate that a URL uses HTTP(S) and matches the expected host.
-
-        Prevents SSRF by rejecting URLs with non-HTTP schemes or
-        unexpected hosts that may have been injected via malicious
-        ``href`` attributes in scraped HTML. Uses suffix matching
-        on the netloc to prevent spoofing via subdomains like
-        ``expected_host.evil.com``.
-
-        Args:
-            url: The URL to validate.
-            expected_host: The expected host suffix for the URL
-                (e.g. ``"brightermonday.co.ke"``).
-
-        Returns:
-            The URL if valid, or ``None`` if it fails validation.
-        """
-        try:
-            parsed = urlparse(url)
-        except ValueError:
-            return None
-        if parsed.scheme not in ("http", "https"):
-            return None
-        netloc = (parsed.netloc or "").split(":")[0]
-        if netloc != expected_host and not netloc.endswith("." + expected_host):
-            return None
-        return url
 
     async def _fetch_page(
         self,
