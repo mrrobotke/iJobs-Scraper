@@ -418,9 +418,14 @@ The base adapter classes include configurable rate limiting. If a portal require
 
 ```python
 class MyPortalAdapter(APIAdapter):
-    # Override default delay between requests (seconds)
-    request_delay: float = 2.0
-    request_jitter: float = 0.5  # Random jitter added to delay
+    def __init__(self) -> None:
+        # APIAdapter default delay is 1.0s between requests
+        super().__init__(request_delay=2.0)
+
+class MyHTMLPortalAdapter(HTMLAdapter):
+    def __init__(self) -> None:
+        # HTMLAdapter supports delay + random jitter
+        super().__init__(request_delay=3.0, jitter=1.5)
 ```
 
 If you receive an HTTP 429 response, the adapter should raise `RateLimitError`:

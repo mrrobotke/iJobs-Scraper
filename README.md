@@ -62,7 +62,7 @@ async def main():
         slug="one-acre-fund",
         adapter="greenhouse",
         source_type=SourceType.API,
-        base_url="https://boards-api.greenhouse.io/v1/boards/oneacrefund",
+        base_url="https://boards-api.greenhouse.io",
         config={"board_token": "oneacrefund"},
     )
     result = await engine.scrape_source(source)
@@ -76,19 +76,22 @@ asyncio.run(main())
 
 | Source | Adapter | Type | Reusable | Status |
 |--------|---------|------|----------|--------|
-| Kenya Airways | `kenya_airways` | API | No | Planned |
+| Kenya Airways | `kenya_airways` | API | No | Stable |
 | One Acre Fund | `greenhouse` | API | Yes | Stable |
-| Amref Health Africa | `smartrecruiters` | API | Yes | Planned |
-| Careerjet Kenya | `careerjet` | API | Yes | Planned |
-| ReliefWeb | `reliefweb` | API | No | Planned |
-| BrighterMonday | `brightermonday` | HTML | No | Planned |
-| MyJobMag Kenya | `myjobmag` | HTML | No | Planned |
-| MyGov Kenya | `mygov` | HTML | No | Planned |
-| Fuzu Kenya | `fuzu` | HTML | No | Planned |
-| KCB Bank | `kcb` | HTML | No | Planned |
-| Absa / NCBA | `workday` | Browser | Yes | Planned |
-| Impactpool | `impactpool` | Browser | No | Planned |
-| World Vision | `world_vision` | Browser | No | Planned |
+| Amref Health Africa | `smartrecruiters` | API | Yes | Stable |
+| Careerjet Kenya | `careerjet` | API | Yes | Stable |
+| ReliefWeb | `reliefweb` | API | No | Stable |
+| BrighterMonday | `brightermonday` | HTML | No | Stable |
+| MyJobMag Kenya | `myjobmag` | HTML | No | Stable |
+| MyGov Kenya | `mygov` | HTML | No | Stable |
+| Fuzu Kenya | `fuzu` | HTML | No | Stable |
+| KCB Bank | `kcb` | HTML | No | Stable |
+| Absa Bank | `workday` | Browser | Yes | Stable |
+| NCBA Bank | `workday` | Browser | Yes | Stable |
+| Impactpool | `impactpool` | Browser | No | Stable |
+| World Vision | `world_vision` | Browser | No | Stable |
+
+> **14 sources, 13 adapters** — Absa and NCBA share the reusable `workday` adapter with different config.
 
 **Reusable** adapters work with any employer on the same platform. For example, the `greenhouse` adapter works for any company using Greenhouse by changing the `board_token` config.
 
@@ -290,7 +293,7 @@ from ijobs_scraper import (
 )
 ```
 
-For full API documentation, see [docs/scraper-engine.md](docs/scraper-engine.md).
+For full API documentation, see [docs/api-reference.md](docs/api-reference.md).
 
 ## Contributing
 
