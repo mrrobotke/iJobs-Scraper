@@ -39,3 +39,6 @@ Thumbs.db
 # Ruff
 .ruff_cache/
 uv.lock
+
+# Serena
+.serena/
