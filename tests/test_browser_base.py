@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sys
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -55,9 +55,11 @@ class TestLaunchBrowser:
         """_launch_browser raises AdapterError when playwright is not installed."""
         adapter = _ConcreteBrowserAdapter()
 
-        with patch.dict(sys.modules, {"playwright": None, "playwright.async_api": None}):
-            with pytest.raises(AdapterError, match="playwright is required"):
-                await adapter._launch_browser()
+        with (
+            patch.dict(sys.modules, {"playwright": None, "playwright.async_api": None}),
+            pytest.raises(AdapterError, match="playwright is required"),
+        ):
+            await adapter._launch_browser()
 
 
 class TestCloseBrowser:
@@ -101,12 +103,15 @@ class TestCloseBrowser:
         adapter._pw = AsyncMock()
         adapter._pw.stop = AsyncMock()
 
+        browser_mock = adapter._browser
+        pw_mock = adapter._pw
+
         # Should NOT raise despite context.close failing
         await adapter._close_browser()
 
         # Browser and playwright should still have been closed
-        adapter._browser.close.assert_awaited_once()
-        adapter._pw.stop.assert_awaited_once()
+        browser_mock.close.assert_awaited_once()
+        pw_mock.stop.assert_awaited_once()
         assert adapter._context is None
         assert adapter._browser is None
         assert adapter._pw is None
@@ -374,10 +379,7 @@ class TestValidateUrl:
     def test_rejects_host_suffix_spoof(self) -> None:
         """example.com.evil.com should NOT match example.com."""
         adapter = _ConcreteBrowserAdapter()
-        assert adapter._validate_url(
-            "https://example.com.evil.com/job/1", "example.com"
-        ) is None
-
+        assert adapter._validate_url("https://example.com.evil.com/job/1", "example.com") is None
 
 
 class TestCanHandleUrl:
