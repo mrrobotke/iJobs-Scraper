@@ -89,18 +89,41 @@ class TestCloseBrowser:
         assert adapter._browser is None
         assert adapter._pw is None
 
-    async def test_context_error_propagates(self) -> None:
-        """Error in context.close propagates (not silently swallowed)."""
+    async def test_per_step_error_handling(self) -> None:
+        """Each cleanup step handles errors independently."""
         adapter = _ConcreteBrowserAdapter()
         adapter._context = AsyncMock()
         adapter._context.close = AsyncMock(
             side_effect=RuntimeError("context close failed"),
         )
         adapter._browser = AsyncMock()
+        adapter._browser.close = AsyncMock()
         adapter._pw = AsyncMock()
+        adapter._pw.stop = AsyncMock()
 
-        with pytest.raises(RuntimeError, match="context close failed"):
+        # Should NOT raise despite context.close failing
+        await adapter._close_browser()
+
+        # Browser and playwright should still have been closed
+        adapter._browser.close.assert_awaited_once()
+        adapter._pw.stop.assert_awaited_once()
+        assert adapter._context is None
+        assert adapter._browser is None
+        assert adapter._pw is None
+
+    async def test_timeout_handling(self) -> None:
+        """Cleanup handles stuck resources via timeout."""
+        adapter = _ConcreteBrowserAdapter()
+        adapter._context = AsyncMock()
+        adapter._browser = AsyncMock()
+        adapter._pw = None
+
+        with patch("ijobs_scraper.adapters.base.asyncio.wait_for") as mock_wf:
+            mock_wf.side_effect = TimeoutError()
             await adapter._close_browser()
+
+        assert adapter._context is None
+        assert adapter._browser is None
 
     async def test_handles_all_none(self) -> None:
         """_close_browser handles the case where no resources were created."""
@@ -112,12 +135,21 @@ class TestCloseBrowser:
         await adapter._close_browser()
 
 
-class TestFetchDetailBaseClass:
-    """Tests for BrowserAdapter.fetch_detail (inherits default from BaseAdapter)."""
+class _NoSelectorAdapter(BrowserAdapter):
+    """Adapter with no detail selector configured."""
 
-    async def test_returns_listing_unchanged(self) -> None:
-        """Base fetch_detail returns the listing as-is (no override in BrowserAdapter)."""
-        adapter = _ConcreteBrowserAdapter()
+    _host_suffix = "example.com"
+
+    async def fetch_listings(self, config: SourceConfig) -> AsyncIterator[RawListing]:
+        yield RawListing(external_url="https://example.com/job/1")  # pragma: no cover
+
+
+class TestFetchDetailSkipConditions:
+    """Tests for the three skip paths in base class fetch_detail."""
+
+    async def test_skip_no_selector_configured(self) -> None:
+        """Returns listing as-is when _detail_selector is empty."""
+        adapter = _NoSelectorAdapter()
         listing = RawListing(
             external_url="https://example.com/job/1",
             title="Test Job",
@@ -126,18 +158,196 @@ class TestFetchDetailBaseClass:
         result = await adapter.fetch_detail(listing, _make_config())
         assert result is listing
 
-    async def test_returns_listing_with_html(self) -> None:
-        """Base fetch_detail preserves existing raw_html."""
-        adapter = _ConcreteBrowserAdapter()
+    async def test_skip_no_host_suffix_configured(self) -> None:
+        """Returns listing as-is when _host_suffix is empty."""
+        adapter = _NoHostAdapter()
         listing = RawListing(
             external_url="https://example.com/job/1",
             title="Test Job",
             company_name="Test Corp",
-            raw_html="<div>existing content</div>",
         )
         result = await adapter.fetch_detail(listing, _make_config())
         assert result is listing
-        assert result.raw_html == "<div>existing content</div>"
+
+    async def test_skip_already_has_sufficient_html(self) -> None:
+        """Returns listing as-is when raw_html exceeds _detail_min_length."""
+        adapter = _ConcreteBrowserAdapter()  # min_length = 100
+        listing = RawListing(
+            external_url="https://example.com/job/1",
+            title="Test Job",
+            company_name="Test Corp",
+            raw_html="<div>" + "x" * 200 + "</div>",
+        )
+        result = await adapter.fetch_detail(listing, _make_config())
+        assert result.raw_html == listing.raw_html
+
+    async def test_skip_invalid_host(self) -> None:
+        """Returns listing as-is when URL doesn't match expected host."""
+        adapter = _ConcreteBrowserAdapter()  # _host_suffix = "example.com"
+        listing = RawListing(
+            external_url="https://evil.com/steal",
+            title="Bad Job",
+            company_name="Evil Corp",
+        )
+        result = await adapter.fetch_detail(listing, _make_config())
+        assert result.raw_html is None
+
+    async def test_proceeds_when_html_below_threshold(self) -> None:
+        """Does not skip when raw_html exists but is below the minimum length."""
+        adapter = _ConcreteBrowserAdapter()  # min_length = 100
+        listing = RawListing(
+            external_url="https://example.com/job/1",
+            title="Test Job",
+            company_name="Test Corp",
+            raw_html="<h1>Short</h1>",
+        )
+        # Patch playwright import to simulate ImportError fallback
+        with patch.dict(sys.modules, {"playwright": None, "playwright.async_api": None}):
+            result = await adapter.fetch_detail(listing, _make_config())
+        # ImportError path returns listing unchanged
+        assert result.raw_html == "<h1>Short</h1>"
+
+
+class TestFetchDetailPlaywrightPath:
+    """Test the full fetch_detail path with mocked Playwright."""
+
+    async def test_fetches_and_returns_html(self) -> None:
+        """Full happy path: launches browser, fetches detail, returns HTML."""
+        detail_el = AsyncMock()
+        detail_el.inner_html = AsyncMock(return_value="<p>Job details here</p>")
+
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock()
+        mock_page.set_default_timeout = MagicMock()
+        mock_page.query_selector = AsyncMock(return_value=detail_el)
+
+        mock_context = AsyncMock()
+        mock_context.new_page = AsyncMock(return_value=mock_page)
+        mock_context.close = AsyncMock()
+
+        mock_browser = AsyncMock()
+        mock_browser.new_context = AsyncMock(return_value=mock_context)
+        mock_browser.close = AsyncMock()
+
+        mock_pw = AsyncMock()
+        mock_pw.chromium.launch = AsyncMock(return_value=mock_browser)
+        mock_pw.stop = AsyncMock()
+
+        mock_async_pw_func = MagicMock()
+        mock_async_pw_instance = AsyncMock()
+        mock_async_pw_instance.start = AsyncMock(return_value=mock_pw)
+        mock_async_pw_func.return_value = mock_async_pw_instance
+
+        adapter = _ConcreteBrowserAdapter(page_timeout=5.0, nav_delay=0)
+        listing = RawListing(
+            external_url="https://example.com/job/1",
+            title="Test Job",
+            company_name="Test Corp",
+        )
+
+        playwright_mock = MagicMock()
+        playwright_mock.async_playwright = mock_async_pw_func
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "playwright": MagicMock(),
+                "playwright.async_api": playwright_mock,
+            },
+        ):
+            result = await adapter.fetch_detail(listing, _make_config())
+
+        assert result.raw_html is not None
+        assert "Job details here" in result.raw_html
+
+    async def test_returns_original_on_playwright_error(self) -> None:
+        """Returns original listing when Playwright raises an error."""
+        mock_async_pw_func = MagicMock()
+        mock_async_pw_instance = AsyncMock()
+        mock_async_pw_instance.start = AsyncMock(
+            side_effect=RuntimeError("browser crash"),
+        )
+        mock_async_pw_func.return_value = mock_async_pw_instance
+
+        adapter = _ConcreteBrowserAdapter(page_timeout=5.0, nav_delay=0)
+        listing = RawListing(
+            external_url="https://example.com/job/1",
+            title="Test Job",
+            company_name="Test Corp",
+        )
+
+        playwright_mock = MagicMock()
+        playwright_mock.async_playwright = mock_async_pw_func
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "playwright": MagicMock(),
+                "playwright.async_api": playwright_mock,
+            },
+        ):
+            result = await adapter.fetch_detail(listing, _make_config())
+
+        assert result.external_url == listing.external_url
+
+    async def test_detail_element_not_found_returns_original(self) -> None:
+        """Returns original listing when detail selector finds nothing."""
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock()
+        mock_page.set_default_timeout = MagicMock()
+        mock_page.query_selector = AsyncMock(return_value=None)
+
+        mock_context = AsyncMock()
+        mock_context.new_page = AsyncMock(return_value=mock_page)
+        mock_context.close = AsyncMock()
+
+        mock_browser = AsyncMock()
+        mock_browser.new_context = AsyncMock(return_value=mock_context)
+        mock_browser.close = AsyncMock()
+
+        mock_pw = AsyncMock()
+        mock_pw.chromium.launch = AsyncMock(return_value=mock_browser)
+        mock_pw.stop = AsyncMock()
+
+        mock_async_pw_func = MagicMock()
+        mock_async_pw_instance = AsyncMock()
+        mock_async_pw_instance.start = AsyncMock(return_value=mock_pw)
+        mock_async_pw_func.return_value = mock_async_pw_instance
+
+        adapter = _ConcreteBrowserAdapter(page_timeout=5.0, nav_delay=0)
+        listing = RawListing(
+            external_url="https://example.com/job/1",
+            title="Test Job",
+            company_name="Test Corp",
+        )
+
+        playwright_mock = MagicMock()
+        playwright_mock.async_playwright = mock_async_pw_func
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "playwright": MagicMock(),
+                "playwright.async_api": playwright_mock,
+            },
+        ):
+            result = await adapter.fetch_detail(listing, _make_config())
+
+        assert result.external_url == listing.external_url
+
+    async def test_playwright_import_error_returns_original(self) -> None:
+        """Returns original listing when playwright is not installed."""
+        adapter = _ConcreteBrowserAdapter(page_timeout=5.0, nav_delay=0)
+        listing = RawListing(
+            external_url="https://example.com/job/1",
+            title="Test Job",
+            company_name="Test Corp",
+        )
+
+        with patch.dict(sys.modules, {"playwright": None, "playwright.async_api": None}):
+            result = await adapter.fetch_detail(listing, _make_config())
+
+        assert result.external_url == listing.external_url
 
 
 class TestValidateUrl:
