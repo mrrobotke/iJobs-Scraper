@@ -30,7 +30,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_HOST = "wvi.org"
 _DEFAULT_MAX_PAGES = 50
 _JOB_CARD_SELECTOR = (
     "a.job-listing, .job-card a, "
@@ -49,6 +48,10 @@ class WorldVisionAdapter(BrowserAdapter):
     requires Playwright to interact with the dynamic content.
     """
 
+    _host_suffix = "wvi.org"
+    _detail_selector = ".job-description, .job-detail, article, main"
+    _detail_min_length = 200
+
     async def fetch_listings(self, config: SourceConfig) -> AsyncIterator[RawListing]:
         """Fetch job listings from World Vision careers.
 
@@ -66,10 +69,9 @@ class WorldVisionAdapter(BrowserAdapter):
         location_filter = config.config.get("location", "Kenya")
         url = f"{base}/jobs?location={location_filter}"
         max_pages = int(config.config.get("max_pages", _DEFAULT_MAX_PAGES))
-        page: Any = None
 
         try:
-            page = await self._launch_browser()
+            page: Any = await self._launch_browser()
             await self._navigate(page, url)
 
             for page_num in range(1, max_pages + 1):
@@ -79,11 +81,19 @@ class WorldVisionAdapter(BrowserAdapter):
                         _JOB_CARD_SELECTOR,
                         timeout=self._page_timeout * 1000,
                     )
-                except Exception:
+                except Exception as exc:
                     if page_num == 1:
                         logger.warning(
-                            "No job cards found on first page for %s",
+                            "No job cards found on first page for %s: %s",
                             config.slug,
+                            exc,
+                        )
+                    else:
+                        logger.debug(
+                            "No more job cards on page %d for %s: %s",
+                            page_num,
+                            config.slug,
+                            exc,
                         )
                     break
 
@@ -98,7 +108,7 @@ class WorldVisionAdapter(BrowserAdapter):
                             continue
 
                         external_url = urljoin(base + "/", href)
-                        external_url = self._validate_url(external_url, _HOST) or ""
+                        external_url = self._validate_url(external_url, self._host_suffix) or ""
                         if not external_url:
                             continue
 
@@ -121,9 +131,11 @@ class WorldVisionAdapter(BrowserAdapter):
                             if loc_text and loc_text.strip():
                                 location = loc_text.strip()
 
-                        raw_html_parts = [f"<h1>{title}</h1>"]
+                        from html import escape as html_escape
+
+                        raw_html_parts = [f"<h1>{html_escape(title)}</h1>"]
                         if location:
-                            raw_html_parts.append(f"<p>{location}</p>")
+                            raw_html_parts.append(f"<p>{html_escape(location)}</p>")
 
                         yield RawListing(
                             external_url=external_url,
@@ -150,49 +162,13 @@ class WorldVisionAdapter(BrowserAdapter):
                         _JOB_CARD_SELECTOR,
                         timeout=self._page_timeout * 1000,
                     )
-                except Exception:
+                except Exception as exc:
+                    logger.debug(
+                        "Pagination ended on page %d for %s: %s",
+                        page_num,
+                        config.slug,
+                        exc,
+                    )
                     break
         finally:
             await self._close_browser()
-
-    async def fetch_detail(self, listing: RawListing, config: SourceConfig) -> RawListing:
-        """Fetch the full job detail page via Playwright.
-
-        Args:
-            listing: The listing to enrich with full HTML content.
-            config: Source configuration.
-
-        Returns:
-            The listing with ``raw_html`` populated from the detail page.
-        """
-        if listing.raw_html and len(listing.raw_html) > 200:
-            return listing
-
-        if not self._validate_url(listing.external_url, _HOST):
-            logger.warning(
-                "Rejecting detail URL outside expected host: %s",
-                listing.external_url,
-            )
-            return listing
-
-        page: Any = None
-        try:
-            page = await self._launch_browser()
-            await self._navigate(page, listing.external_url)
-
-            detail = await page.query_selector(".job-description, .job-detail, article, main")
-            html = await detail.inner_html() if detail else ""
-            return listing.model_copy(update={"raw_html": html})
-        finally:
-            await self._close_browser()
-
-    def can_handle_url(self, url: str) -> bool:
-        """Check if this URL belongs to World Vision careers.
-
-        Args:
-            url: The URL to check.
-
-        Returns:
-            True if the URL matches the World Vision domain.
-        """
-        return self._validate_url(url, _HOST) is not None

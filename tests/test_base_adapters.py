@@ -1,4 +1,4 @@
-"""Tests for BaseAdapter and HTMLAdapter base class security features."""
+"""Tests for BaseAdapter, HTMLAdapter, and BrowserAdapter base class features."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import httpx
 import pytest
 import respx
 
-from ijobs_scraper.adapters.base import BaseAdapter, HTMLAdapter
+from ijobs_scraper.adapters.base import BaseAdapter, BrowserAdapter, HTMLAdapter
 from ijobs_scraper.exceptions import AdapterError
 from ijobs_scraper.models import RawListing, SourceConfig
 
@@ -17,6 +17,13 @@ if TYPE_CHECKING:
 
 
 class _ConcreteHTMLAdapter(HTMLAdapter):
+    """Minimal concrete adapter for testing base class methods."""
+
+    async def fetch_listings(self, config: SourceConfig) -> AsyncIterator[RawListing]:
+        yield RawListing(external_url="https://example.com/job/1")  # pragma: no cover
+
+
+class _ConcreteBrowserAdapter(BrowserAdapter):
     """Minimal concrete adapter for testing base class methods."""
 
     async def fetch_listings(self, config: SourceConfig) -> AsyncIterator[RawListing]:
@@ -131,3 +138,46 @@ class TestMaxResponseSize:
         adapter = _ConcreteHTMLAdapter(request_delay=0, jitter=0)
         soup = await adapter._fetch_page(url)
         assert soup is not None
+
+
+class TestRequireConfig:
+    """Tests for BaseAdapter._require_config (available to all adapter types)."""
+
+    def _config_with(self, **kwargs: object) -> SourceConfig:
+        return SourceConfig(
+            name="Test",
+            slug="test",
+            adapter="test",
+            source_type="browser",
+            base_url="https://example.com",
+            config=dict(kwargs),
+        )
+
+    def test_returns_string_value(self) -> None:
+        adapter = _ConcreteBrowserAdapter()
+        config = self._config_with(my_key="my_value")
+        assert adapter._require_config(config, "my_key") == "my_value"
+
+    def test_html_adapter_also_has_require_config(self) -> None:
+        adapter = _ConcreteHTMLAdapter(request_delay=0, jitter=0)
+        config = self._config_with(token="abc")
+        assert adapter._require_config(config, "token") == "abc"
+
+    def test_missing_key_raises_adapter_error(self) -> None:
+        adapter = _ConcreteBrowserAdapter()
+        config = self._config_with()
+        with pytest.raises(AdapterError, match="Missing required config key 'board_token'"):
+            adapter._require_config(config, "board_token")
+
+    def test_non_string_value_raises_adapter_error(self) -> None:
+        adapter = _ConcreteBrowserAdapter()
+        config = self._config_with(count=42)
+        with pytest.raises(AdapterError, match="must be a string"):
+            adapter._require_config(config, "count")
+
+    def test_not_retryable(self) -> None:
+        adapter = _ConcreteBrowserAdapter()
+        config = self._config_with()
+        with pytest.raises(AdapterError) as exc_info:
+            adapter._require_config(config, "key")
+        assert exc_info.value.retryable is False

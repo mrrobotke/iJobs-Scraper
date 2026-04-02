@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -35,7 +35,6 @@ def _make_mock_card(
     # Title element
     title_el = AsyncMock()
     title_el.text_content = AsyncMock(return_value=title)
-    card.query_selector = AsyncMock(return_value=title_el)
 
     # Organization element (second query_selector call)
     if org:
@@ -57,6 +56,7 @@ def _make_mock_page(
     page = AsyncMock()
     page.goto = AsyncMock()
     page.wait_for_selector = AsyncMock()
+    page.set_default_timeout = MagicMock()
 
     if cards is None:
         cards = [_make_mock_card()]
@@ -176,6 +176,7 @@ class TestFetchListings:
     async def test_browser_cleanup_on_error(self) -> None:
         mock_page = AsyncMock()
         mock_page.goto = AsyncMock(side_effect=RuntimeError("connection failed"))
+        mock_page.set_default_timeout = MagicMock()
 
         adapter = ImpactpoolAdapter(page_timeout=5.0, nav_delay=0)
         close_mock = AsyncMock()
@@ -188,29 +189,68 @@ class TestFetchListings:
 
         close_mock.assert_awaited_once()
 
+    async def test_pagination(self) -> None:
+        """Test that adapter follows next link through pages."""
+        cards_page1 = [_make_mock_card("Job A", "/jobs/a-1", "UNDP")]
+        cards_page2 = [_make_mock_card("Job B", "/jobs/b-2", "UNICEF")]
 
-class TestFetchDetail:
-    async def test_fetches_detail_page(self) -> None:
-        detail_el = AsyncMock()
-        detail_el.inner_html = AsyncMock(return_value="<p>Lead monitoring and evaluation</p>")
         mock_page = AsyncMock()
         mock_page.goto = AsyncMock()
-        mock_page.query_selector = AsyncMock(return_value=detail_el)
+        mock_page.wait_for_selector = AsyncMock()
+        mock_page.set_default_timeout = MagicMock()
+
+        call_count = 0
+
+        async def query_selector_all_side_effect(selector: str) -> list[AsyncMock]:
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 1:
+                return cards_page1
+            return cards_page2
+
+        mock_page.query_selector_all = AsyncMock(side_effect=query_selector_all_side_effect)
+
+        next_link = AsyncMock()
+        next_link.click = AsyncMock()
+        mock_page.query_selector = AsyncMock(side_effect=[next_link, None])
 
         adapter = ImpactpoolAdapter(page_timeout=5.0, nav_delay=0)
-        listing = RawListing(
-            external_url=f"{BASE_URL}/jobs/me-officer-001",
-            title="M&E Officer",
-            company_name="UNDP",
-        )
         with (
             patch.object(adapter, "_launch_browser", return_value=mock_page),
             patch.object(adapter, "_close_browser", new_callable=AsyncMock),
         ):
-            result = await adapter.fetch_detail(listing, _make_config())
+            listings = [listing async for listing in adapter.fetch_listings(_make_config())]
 
-        assert result.raw_html is not None
-        assert "monitoring and evaluation" in result.raw_html
+        assert len(listings) == 2
+        assert listings[0].title == "Job A"
+        assert listings[1].title == "Job B"
+
+    async def test_per_card_exception_isolation(self) -> None:
+        """One card raising an exception should not stop remaining cards."""
+        bad_card = AsyncMock()
+        bad_card.get_attribute = AsyncMock(return_value="/jobs/bad-001")
+        bad_card.query_selector = AsyncMock(side_effect=RuntimeError("DOM error"))
+
+        good_card = _make_mock_card("Good Job", "/jobs/good-002", "UNDP")
+        mock_page = _make_mock_page(cards=[bad_card, good_card])
+
+        adapter = ImpactpoolAdapter(page_timeout=5.0, nav_delay=0)
+        with (
+            patch.object(adapter, "_launch_browser", return_value=mock_page),
+            patch.object(adapter, "_close_browser", new_callable=AsyncMock),
+        ):
+            listings = [listing async for listing in adapter.fetch_listings(_make_config())]
+
+        assert len(listings) == 1
+        assert listings[0].title == "Good Job"
+
+
+class TestFetchDetail:
+    """Tests for fetch_detail behavior.
+
+    These tests work with both the per-adapter fetch_detail (if present)
+    and the base class implementation using class attributes.
+    """
 
     async def test_skips_if_already_has_detail(self) -> None:
         adapter = ImpactpoolAdapter()

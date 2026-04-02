@@ -34,7 +34,6 @@ from typing import TYPE_CHECKING, Any
 
 from ijobs_scraper._registry import AdapterRegistry
 from ijobs_scraper.adapters.base import BrowserAdapter
-from ijobs_scraper.exceptions import AdapterError
 from ijobs_scraper.models import RawListing, SourceConfig
 
 if TYPE_CHECKING:
@@ -42,11 +41,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_HOST_SUFFIX = "myworkdayjobs.com"
 _DEFAULT_MAX_PAGES = 50
 _JOB_CARD_SELECTOR = 'a[data-automation-id="jobTitle"]'
 _NEXT_BUTTON_SELECTOR = 'button[data-uxi-element-id="next"]'
-_RESULTS_CONTAINER = '[data-automation-id="jobResults"]'
 
 
 @AdapterRegistry.register("workday")
@@ -66,6 +63,10 @@ class WorkdayAdapter(BrowserAdapter):
         - ``instance``: The career site instance name (e.g. ``"AbsaCareers"``).
     """
 
+    _host_suffix = "myworkdayjobs.com"
+    _detail_selector = '[data-automation-id="jobPostingDescription"]'
+    _detail_min_length = 200
+
     def _build_careers_url(self, config: SourceConfig) -> str:
         """Build the Workday careers listing URL from config.
 
@@ -76,14 +77,7 @@ class WorkdayAdapter(BrowserAdapter):
             The full URL to the Workday careers listing page.
         """
         base = config.base_url.rstrip("/")
-        instance = config.config.get("instance", "")
-        if not instance:
-            raise AdapterError(
-                self.__class__.__name__,
-                "Missing required config key 'instance'. "
-                "Provide it in SourceConfig(config={'instance': '...'})",
-                retryable=False,
-            )
+        instance = self._require_config(config, "instance")
         return f"{base}/en-US/{instance}/jobs"
 
     async def fetch_listings(self, config: SourceConfig) -> AsyncIterator[RawListing]:
@@ -99,12 +93,14 @@ class WorkdayAdapter(BrowserAdapter):
         Yields:
             A ``RawListing`` for each job card found.
         """
+        from html import escape as html_escape
+
         url = self._build_careers_url(config)
         max_pages = int(config.config.get("max_pages", _DEFAULT_MAX_PAGES))
-        page: Any = None
+        seen_urls: set[str] = set()
 
         try:
-            page = await self._launch_browser()
+            page: Any = await self._launch_browser()
             await self._navigate(page, url)
 
             for page_num in range(1, max_pages + 1):
@@ -114,11 +110,19 @@ class WorkdayAdapter(BrowserAdapter):
                         _JOB_CARD_SELECTOR,
                         timeout=self._page_timeout * 1000,
                     )
-                except Exception:
+                except Exception as exc:
                     if page_num == 1:
                         logger.warning(
-                            "No job cards found on first page for %s",
+                            "No job cards found on first page for %s: %s",
                             config.slug,
+                            exc,
+                        )
+                    else:
+                        logger.debug(
+                            "No more job cards on page %d for %s: %s",
+                            page_num,
+                            config.slug,
+                            exc,
                         )
                     break
 
@@ -138,13 +142,17 @@ class WorkdayAdapter(BrowserAdapter):
                         base = config.base_url.rstrip("/")
                         external_url = f"{base}{href}" if href.startswith("/") else href
 
-                        external_url = self._validate_url(external_url, _HOST_SUFFIX) or ""
+                        external_url = self._validate_url(external_url, self._host_suffix) or ""
                         if not external_url:
                             logger.debug(
                                 "Skipping Workday listing with invalid URL: %s",
                                 href,
                             )
                             continue
+
+                        if external_url in seen_urls:
+                            continue
+                        seen_urls.add(external_url)
 
                         # Try to extract location from sibling elements
                         location = None
@@ -158,9 +166,9 @@ class WorkdayAdapter(BrowserAdapter):
                             if loc_el:
                                 location = await loc_el.text_content()
 
-                        raw_html_parts = [f"<h1>{title}</h1>"]
+                        raw_html_parts = [f"<h1>{html_escape(title)}</h1>"]
                         if location:
-                            raw_html_parts.append(f"<p>{location.strip()}</p>")
+                            raw_html_parts.append(f"<p>{html_escape(location.strip())}</p>")
 
                         yield RawListing(
                             external_url=external_url,
@@ -191,62 +199,13 @@ class WorkdayAdapter(BrowserAdapter):
                         _JOB_CARD_SELECTOR,
                         timeout=self._page_timeout * 1000,
                     )
-                except Exception:
+                except Exception as exc:
+                    logger.debug(
+                        "Pagination ended on page %d for %s: %s",
+                        page_num,
+                        config.slug,
+                        exc,
+                    )
                     break
         finally:
             await self._close_browser()
-
-    async def fetch_detail(self, listing: RawListing, config: SourceConfig) -> RawListing:
-        """Fetch the full job detail page via Playwright.
-
-        Args:
-            listing: The listing to enrich with full HTML content.
-            config: Source configuration.
-
-        Returns:
-            The listing with ``raw_html`` populated from the detail page.
-        """
-        if listing.raw_html and len(listing.raw_html) > 200:
-            return listing
-
-        if not self._validate_url(listing.external_url, _HOST_SUFFIX):
-            logger.warning(
-                "Rejecting detail URL outside expected host: %s",
-                listing.external_url,
-            )
-            return listing
-
-        page: Any = None
-        try:
-            page = await self._launch_browser()
-            await self._navigate(page, listing.external_url)
-
-            # Wait for job detail content
-            try:
-                await page.wait_for_selector(
-                    '[data-automation-id="jobPostingDescription"]',
-                    timeout=self._page_timeout * 1000,
-                )
-            except Exception:
-                logger.warning(
-                    "Job detail content did not load for %s",
-                    listing.external_url,
-                )
-                return listing
-
-            detail = await page.query_selector('[data-automation-id="jobPostingDescription"]')
-            html = await detail.inner_html() if detail else ""
-            return listing.model_copy(update={"raw_html": html})
-        finally:
-            await self._close_browser()
-
-    def can_handle_url(self, url: str) -> bool:
-        """Check if this URL belongs to a Workday career site.
-
-        Args:
-            url: The URL to check.
-
-        Returns:
-            True if the URL matches a Workday domain.
-        """
-        return self._validate_url(url, _HOST_SUFFIX) is not None

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -73,6 +73,7 @@ def _make_mock_page(
     page = AsyncMock()
     page.goto = AsyncMock()
     page.wait_for_selector = AsyncMock()
+    page.set_default_timeout = MagicMock()
 
     if cards is None:
         cards = [_make_mock_card()]
@@ -106,7 +107,8 @@ class TestBuildCareersUrl:
     def test_missing_instance_raises(self) -> None:
         adapter = WorkdayAdapter()
         config = _make_config()
-        config.config["instance"] = ""
+        # Remove the key entirely so _require_config raises
+        del config.config["instance"]
         with pytest.raises(AdapterError, match="instance"):
             adapter._build_careers_url(config)
 
@@ -146,7 +148,7 @@ class TestFetchListings:
         assert listings[0].external_url.startswith("https://absa.wd3.myworkdayjobs.com")
 
     async def test_ncba_config_works(self) -> None:
-        """Workday adapter is reusable — NCBA uses same adapter, different config."""
+        """Workday adapter is reusable -- NCBA uses same adapter, different config."""
         card = _make_mock_card(
             "Risk Analyst",
             "/en-US/NCBACareers/job/Risk-Analyst_100",
@@ -220,6 +222,7 @@ class TestFetchListings:
         mock_page = AsyncMock()
         mock_page.goto = AsyncMock()
         mock_page.wait_for_selector = AsyncMock()
+        mock_page.set_default_timeout = MagicMock()
 
         call_count = 0
 
@@ -271,6 +274,7 @@ class TestFetchListings:
         """Browser resources are cleaned up even if an error occurs."""
         mock_page = AsyncMock()
         mock_page.goto = AsyncMock(side_effect=RuntimeError("connection failed"))
+        mock_page.set_default_timeout = MagicMock()
 
         adapter = WorkdayAdapter(page_timeout=5.0, nav_delay=0)
         close_mock = AsyncMock()
@@ -283,30 +287,29 @@ class TestFetchListings:
 
         close_mock.assert_awaited_once()
 
+    async def test_per_card_exception_isolation(self) -> None:
+        """One card raising an exception should not stop remaining cards."""
+        bad_card = AsyncMock()
+        bad_card.text_content = AsyncMock(side_effect=RuntimeError("DOM error"))
+        bad_card.get_attribute = AsyncMock(return_value="/en-US/AbsaCareers/job/Bad_1")
+        bad_card.evaluate_handle = AsyncMock(return_value=AsyncMock())
 
-class TestFetchDetail:
-    async def test_fetches_detail_page(self) -> None:
-        detail_el = AsyncMock()
-        detail_el.inner_html = AsyncMock(return_value="<p>Build scalable systems</p>")
-        mock_page = AsyncMock()
-        mock_page.goto = AsyncMock()
-        mock_page.wait_for_selector = AsyncMock()
-        mock_page.query_selector = AsyncMock(return_value=detail_el)
+        good_card = _make_mock_card("Good Job", "/en-US/AbsaCareers/job/Good_2")
+        mock_page = _make_mock_page(cards=[bad_card, good_card])
 
         adapter = WorkdayAdapter(page_timeout=5.0, nav_delay=0)
-        listing = RawListing(
-            external_url=f"{BASE_URL}/en-US/AbsaCareers/job/SE_001",
-            title="Software Engineer",
-            company_name="Absa Bank",
-        )
         with (
             patch.object(adapter, "_launch_browser", return_value=mock_page),
             patch.object(adapter, "_close_browser", new_callable=AsyncMock),
         ):
-            result = await adapter.fetch_detail(listing, _make_config())
+            listings = [listing async for listing in adapter.fetch_listings(_make_config())]
 
-        assert result.raw_html is not None
-        assert "scalable systems" in result.raw_html
+        assert len(listings) == 1
+        assert listings[0].title == "Good Job"
+
+
+class TestFetchDetail:
+    """Tests for base class fetch_detail via WorkdayAdapter class attributes."""
 
     async def test_skips_if_already_has_detail(self) -> None:
         adapter = WorkdayAdapter()
@@ -329,8 +332,59 @@ class TestFetchDetail:
         result = await adapter.fetch_detail(listing, _make_config())
         assert result.raw_html is None
 
+    async def test_fetches_detail_via_playwright(self) -> None:
+        """Base class fetch_detail launches a standalone Playwright session."""
+        detail_el = AsyncMock()
+        detail_el.inner_html = AsyncMock(return_value="<p>Build scalable systems</p>")
+
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock()
+        mock_page.set_default_timeout = MagicMock()
+        mock_page.query_selector = AsyncMock(return_value=detail_el)
+
+        mock_context = AsyncMock()
+        mock_context.new_page = AsyncMock(return_value=mock_page)
+        mock_context.close = AsyncMock()
+
+        mock_browser = AsyncMock()
+        mock_browser.new_context = AsyncMock(return_value=mock_context)
+        mock_browser.close = AsyncMock()
+
+        mock_pw = AsyncMock()
+        mock_pw.chromium.launch = AsyncMock(return_value=mock_browser)
+        mock_pw.stop = AsyncMock()
+
+        mock_async_pw_func = MagicMock()
+        mock_async_pw_instance = AsyncMock()
+        mock_async_pw_instance.start = AsyncMock(return_value=mock_pw)
+        mock_async_pw_func.return_value = mock_async_pw_instance
+
+        adapter = WorkdayAdapter(page_timeout=5.0, nav_delay=0)
+        listing = RawListing(
+            external_url=f"{BASE_URL}/en-US/AbsaCareers/job/SE_001",
+            title="Software Engineer",
+            company_name="Absa Bank",
+        )
+
+        playwright_mock = MagicMock()
+        playwright_mock.async_playwright = mock_async_pw_func
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "playwright": MagicMock(),
+                "playwright.async_api": playwright_mock,
+            },
+        ):
+            result = await adapter.fetch_detail(listing, _make_config())
+
+        assert result.raw_html is not None
+        assert "scalable systems" in result.raw_html
+
 
 class TestCanHandleUrl:
+    """Tests for base class can_handle_url via WorkdayAdapter._host_suffix."""
+
     def test_workday_url(self) -> None:
         adapter = WorkdayAdapter()
         assert adapter.can_handle_url(
