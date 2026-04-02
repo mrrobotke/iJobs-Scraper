@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.0] - 2026-04-02
 
 ### Added
 - Project scaffold with pyproject.toml, Makefile, CI workflows
@@ -19,3 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cron scheduler via croniter
 - Greenhouse API adapter (first reference implementation)
 - Comprehensive unit test suite
+- API adapters: kenya_airways, smartrecruiters, careerjet, reliefweb
+- HTML adapters: brightermonday, myjobmag, mygov, fuzu, kcb
+- Security-hardened HTMLAdapter base with sanitized headers and URL validation
+- Browser adapters: workday (reusable for Absa + NCBA), impactpool, world_vision
+- BrowserAdapter base class with Playwright lifecycle management
+- Complete README with adapter catalog, usage examples, and configuration guide
+- API reference documentation
+- Step-by-step adapter contributor guide with templates for all 3 adapter types
+- Standalone, FastAPI, and iJobs integration examples
+
+[0.1.0]: https://github.com/mrrobotke/ijobs-scraper/releases/tag/v0.1.0
