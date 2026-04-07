@@ -2,6 +2,13 @@
 
 Kenya Airways uses the iRec recruitment platform which exposes a public
 REST API returning full JSON job data with no authentication required.
+
+The API was migrated from ``/careers/api/v2`` to ``/api/Jobs`` in early
+2026.  The new listing endpoint uses page-number based pagination
+(``pageNumber`` / ``pageSize``) instead of offset/limit, and returns
+results inside a ``data`` array with ``hasNext`` / ``hasPrevious``
+pagination flags.
+
 The ``base_url`` in :class:`SourceConfig` drives the API host so the
 adapter can be pointed at staging or alternative environments.
 
@@ -30,9 +37,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CAREERS_API = "https://api-irec-prod.kenya-airways.com/careers/api/v2"
-API_PATH = "/careers/api/v2"
-DEFAULT_LIMIT = 50
+API_PATH = "/api/Jobs"
+DEFAULT_PAGE_SIZE = 50
 MAX_PAGES = 200
 
 
@@ -40,10 +46,11 @@ MAX_PAGES = 200
 class KenyaAirwaysAdapter(APIAdapter):
     """Scrapes jobs from Kenya Airways via the iRec REST API.
 
-    The iRec platform provides a public JSON API with pagination support
-    via ``offset`` and ``limit`` query parameters. No authentication
-    is required. The endpoint is built from ``config.base_url`` so the
-    adapter can target different environments.
+    The iRec platform provides a public JSON API with page-number
+    pagination via ``pageNumber`` and ``pageSize`` query parameters.
+    No authentication is required.  The endpoint is built from
+    ``config.base_url`` so the adapter can target different
+    environments.
     """
 
     async def fetch_listings(self, config: SourceConfig) -> AsyncIterator[RawListing]:
@@ -57,22 +64,23 @@ class KenyaAirwaysAdapter(APIAdapter):
             A ``RawListing`` for each open position.
         """
         base = config.base_url.rstrip("/")
-        url = f"{base}{API_PATH}/jobs"
-        offset = 0
-        limit = DEFAULT_LIMIT
-        page = 0
+        url = f"{base}{API_PATH}/JobListing"
+        page_number = 1
+        page_size = DEFAULT_PAGE_SIZE
 
         while True:
-            data: dict[str, Any] = await self._get(url, params={"offset": offset, "limit": limit})
+            data: dict[str, Any] = await self._get(
+                url, params={"pageNumber": page_number, "pageSize": page_size}
+            )
 
-            if "jobs" not in data:
+            if "data" not in data:
                 logger.warning(
-                    "Kenya Airways API response missing 'jobs' key, keys: %s, source: %s",
+                    "Kenya Airways API response missing 'data' key, keys: %s, source: %s",
                     list(data.keys()),
                     config.slug,
                 )
 
-            jobs = data.get("jobs", [])
+            jobs: list[dict[str, Any]] = data.get("data", [])
             if not jobs:
                 break
 
@@ -84,7 +92,14 @@ class KenyaAirwaysAdapter(APIAdapter):
                         external_url = f"https://careers.kenya-airways.com/jobs/{external_id}"
 
                     if not external_url:
-                        logger.debug("Skipping listing with no URL: external_id=%s", external_id)
+                        logger.debug(
+                            "Skipping listing with no URL: external_id=%s",
+                            external_id,
+                        )
+                        continue
+
+                    if not external_url.startswith(("https://", "http://")):
+                        logger.debug("Rejected non-HTTP URL: %s", external_url)
                         continue
 
                     yield RawListing(
@@ -97,16 +112,15 @@ class KenyaAirwaysAdapter(APIAdapter):
                 except Exception:
                     logger.warning(
                         "Skipping malformed Kenya Airways listing on page %d",
-                        page,
+                        page_number,
                         exc_info=True,
                     )
                     continue
 
-            if len(jobs) < limit:
+            if not data.get("hasNext", False):
                 break
-            offset += limit
-            page += 1
-            if page >= MAX_PAGES:
+            page_number += 1
+            if page_number > MAX_PAGES:
                 logger.warning(
                     "Reached MAX_PAGES (%d) for source %s — results may be truncated",
                     MAX_PAGES,
@@ -138,8 +152,13 @@ class KenyaAirwaysAdapter(APIAdapter):
             )
             return listing
 
+        ext_id = listing.external_id
+        if any(c in ext_id for c in ("\\", "/", "?", "#", "..")):
+            logger.warning("Invalid external_id rejected: %s", ext_id)
+            return listing
+
         base = config.base_url.rstrip("/")
-        url = f"{base}{API_PATH}/jobs/{listing.external_id}"
+        url = f"{base}{API_PATH}/{listing.external_id}"
         data: dict[str, Any] = await self._get(url)
 
         return listing.model_copy(
@@ -156,6 +175,9 @@ class KenyaAirwaysAdapter(APIAdapter):
             url: The URL to check.
 
         Returns:
-            True if the URL contains a Kenya Airways domain.
+            True if the URL matches a Kenya Airways domain.
         """
-        return "kenya-airways.com" in url
+        from urllib.parse import urlparse
+
+        hostname = urlparse(url).hostname or ""
+        return hostname == "kenya-airways.com" or hostname.endswith(".kenya-airways.com")
