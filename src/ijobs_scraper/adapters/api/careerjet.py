@@ -119,7 +119,6 @@ class CareerjetAdapter(APIAdapter):
 
             if len(jobs) < DEFAULT_PAGESIZE:
                 break
-            page += 1
             if page >= MAX_PAGES:
                 logger.warning(
                     "Reached MAX_PAGES (%d) for source %s — results may be truncated",
@@ -127,6 +126,7 @@ class CareerjetAdapter(APIAdapter):
                     config.slug,
                 )
                 break
+            page += 1
 
     def can_handle_url(self, url: str) -> bool:
         """Check if this URL belongs to Careerjet.

@@ -252,7 +252,7 @@ class TestFetchListings:
         with patch("ijobs_scraper.adapters.api.careerjet.MAX_PAGES", 3):
             adapter = CareerjetAdapter(request_delay=0)
             listings = [listing async for listing in adapter.fetch_listings(_make_config())]
-        assert len(listings) == DEFAULT_PAGESIZE * 2
+        assert len(listings) == DEFAULT_PAGESIZE * 3
 
     @respx.mock
     async def test_raises_on_missing_affid(self) -> None:
