@@ -258,11 +258,35 @@ SourceConfig(
     ...
 )
 
-# Careerjet — meta-aggregator covering 60+ sites
+# Careerjet — meta-aggregator covering 60+ sites (v4 API, requires API key)
 SourceConfig(
     adapter="careerjet",
-    config={"locale": "en_KE", "location": "Kenya"},
+    config={"api_key": os.environ["CAREERJET_API_KEY"], "location": "Kenya"},
     ...
+)
+```
+
+### Required environment variables
+
+Some adapters require API keys. Add these to your `.env.local` or `.env` file:
+
+```bash
+# Careerjet v4 API — register at https://www.careerjet.co.ke/partners/register/as-publisher
+CAREERJET_API_KEY=your_publisher_api_key_here
+```
+
+The Careerjet adapter reads `api_key` from `SourceConfig.config`. In your integration, load it from the environment:
+
+```python
+import os
+
+SourceConfig(
+    name="Careerjet Kenya",
+    slug="careerjet-kenya",
+    adapter="careerjet",
+    source_type=SourceType.API,
+    base_url="https://www.careerjet.co.ke",
+    config={"api_key": os.environ["CAREERJET_API_KEY"], "location": "Kenya"},
 )
 ```
 
