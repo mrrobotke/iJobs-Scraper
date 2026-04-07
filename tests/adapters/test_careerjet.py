@@ -126,6 +126,8 @@ class TestFetchListings:
 
         assert len(listings) == 3
         assert route.call_count == 2
+        assert route.calls[0].request.url.params["page"] == "1"
+        assert route.calls[1].request.url.params["page"] == "2"
 
     @respx.mock
     async def test_empty_results(self) -> None:
@@ -251,6 +253,44 @@ class TestFetchListings:
             adapter = CareerjetAdapter(request_delay=0)
             listings = [listing async for listing in adapter.fetch_listings(_make_config())]
         assert len(listings) == DEFAULT_PAGESIZE * 2
+
+    @respx.mock
+    async def test_raises_on_missing_affid(self) -> None:
+        config = _make_config(config={"location": "Kenya"})  # no affid
+        adapter = CareerjetAdapter(request_delay=0)
+        with pytest.raises(AdapterError) as exc_info:
+            async for _ in adapter.fetch_listings(config):
+                pass
+        assert exc_info.value.retryable is False
+        assert "affid" in str(exc_info.value)
+
+    @respx.mock
+    async def test_raises_rate_limit_error_on_429(self) -> None:
+        from ijobs_scraper.exceptions import RateLimitError
+
+        respx.get(CAREERJET_API_URL).mock(return_value=Response(429, headers={"Retry-After": "60"}))
+        adapter = CareerjetAdapter(request_delay=0)
+        with pytest.raises(RateLimitError):
+            async for _ in adapter.fetch_listings(_make_config()):
+                pass
+
+    @respx.mock
+    async def test_raises_on_http_500(self) -> None:
+        import httpx as httpx_mod
+
+        respx.get(CAREERJET_API_URL).mock(return_value=Response(500))
+        adapter = CareerjetAdapter(request_delay=0)
+        with pytest.raises(httpx_mod.HTTPStatusError):
+            async for _ in adapter.fetch_listings(_make_config()):
+                pass
+
+    @respx.mock
+    async def test_keywords_from_config(self) -> None:
+        config = _make_config(config={"affid": "test123", "keywords": "python developer"})
+        route = respx.get(CAREERJET_API_URL).mock(return_value=Response(200, json={"jobs": []}))
+        adapter = CareerjetAdapter(request_delay=0)
+        _ = [listing async for listing in adapter.fetch_listings(config)]
+        assert route.calls[0].request.url.params["keywords"] == "python developer"
 
 
 class TestFetchDetail:
