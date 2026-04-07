@@ -25,9 +25,8 @@ dependencies = [
 
 [project.optional-dependencies]
 browser = ["playwright>=1.40"]
-careerjet = ["careerjet-api>=3.0"]
 pdf = ["pdfplumber>=0.10"]
-all = ["ijobs-scraper[browser,careerjet,pdf]"]
+all = ["ijobs-scraper[browser,pdf]"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",

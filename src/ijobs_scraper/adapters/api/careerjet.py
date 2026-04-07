@@ -1,9 +1,6 @@
-"""Careerjet API adapter via the official Python SDK.
+"""Careerjet API adapter using the public REST endpoint.
 
 Careerjet is a job search aggregator that indexes 60+ job sites.
-Requires the ``careerjet-api`` optional dependency.
-
-Install with: ``pip install ijobs-scraper[careerjet]``
 
 Example::
 
@@ -19,7 +16,6 @@ Example::
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -33,29 +29,30 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+CAREERJET_API_URL = "http://public.api.careerjet.net/search"
 DEFAULT_PAGESIZE = 99
 DEFAULT_LOCATION = "Kenya"
-DEFAULT_LOCALE = "en_KE"
+DEFAULT_LOCALE = "en_GB"
 MAX_PAGES = 200
 
 
 @AdapterRegistry.register("careerjet")
 class CareerjetAdapter(APIAdapter):
-    """Scrapes jobs from Careerjet using the official Python SDK.
+    """Scrapes jobs from Careerjet using the public REST API.
 
     Careerjet indexes 60+ job sites and provides a unified search API.
-    The synchronous SDK calls are wrapped in ``asyncio.to_thread()``.
+    Uses httpx via the base class ``_get()`` method for async requests.
 
     Config keys:
         affid: Careerjet affiliate ID (required).
         keywords: Search keywords (optional, default ``""``).
         location: Location filter (optional, default ``"Kenya"``).
-        locale: SDK locale code (optional, default ``"en_KE"``).
+        locale: API locale code (optional, default ``"en_GB"``).
         user_ip: Client IP for API requests (optional, default ``"0.0.0.0"``).
     """
 
     async def fetch_listings(self, config: SourceConfig) -> AsyncIterator[RawListing]:
-        """Fetch job listings from Careerjet via the SDK.
+        """Fetch job listings from Careerjet via the REST API.
 
         Args:
             config: Source configuration. Must include ``config["affid"]``.
@@ -64,23 +61,13 @@ class CareerjetAdapter(APIAdapter):
             A ``RawListing`` for each job returned by the search.
 
         Raises:
-            AdapterError: If ``careerjet-api`` is not installed.
+            AdapterError: If the Careerjet API returns an error response.
         """
-        try:
-            from careerjet_api import CareerjetAPIClient  # type: ignore[import-untyped]
-        except ImportError as exc:
-            raise AdapterError(
-                "careerjet",
-                "careerjet-api is required. Install with: pip install ijobs-scraper[careerjet]",
-                retryable=False,
-            ) from exc
-
         affid = self._require_config(config, "affid")
         keywords: str = config.config.get("keywords", "")
         location: str = config.config.get("location", DEFAULT_LOCATION)
         locale: str = config.config.get("locale", DEFAULT_LOCALE)
 
-        cj: Any = CareerjetAPIClient(locale)
         page = 1
 
         while True:
@@ -93,9 +80,10 @@ class CareerjetAdapter(APIAdapter):
                 "user_ip": config.config.get("user_ip", "0.0.0.0"),
                 "user_agent": "ijobs-scraper/0.1.0",
                 "url": config.base_url,
+                "locale_code": locale,
             }
 
-            result: dict[str, Any] = await asyncio.to_thread(cj.search, search_params)
+            result: dict[str, Any] = await self._get(CAREERJET_API_URL, params=search_params)
 
             if result.get("type") == "error":
                 raise AdapterError(
