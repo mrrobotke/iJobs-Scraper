@@ -29,7 +29,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CAREERJET_API_URL = "https://public.api.careerjet.net/search"
+# Careerjet API only supports HTTP — port 443 is not open on their server.
+CAREERJET_API_URL = "http://public.api.careerjet.net/search"
 DEFAULT_PAGESIZE = 99
 DEFAULT_LOCATION = "Kenya"
 DEFAULT_LOCALE = "en_GB"
