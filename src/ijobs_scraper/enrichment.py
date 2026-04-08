@@ -47,11 +47,20 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
             "title",
             "description",
             "company_name",
+            "company_website",
             "location",
             "remote_type",
             "employment_type",
-            "category",
+            "experience_level",
+            "salary_min",
+            "salary_max",
+            "currency",
             "skills",
+            "benefits",
+            "category",
+            "requirements",
+            "posted_at",
+            "expires_at",
         ],
         "properties": {
             "title": {"type": "string"},
@@ -94,26 +103,31 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
                 ],
             },
             "requirements": {
-                "type": ["object", "null"],
-                "properties": {
-                    "education_level": {"type": ["string", "null"]},
-                    "min_years_experience": {"type": ["integer", "null"]},
-                    "certifications": {
-                        "type": "array",
-                        "items": {"type": "string"},
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "education_level": {"type": ["string", "null"]},
+                            "min_years_experience": {"type": ["integer", "null"]},
+                            "certifications": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                            "languages": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                        },
+                        "required": [
+                            "education_level",
+                            "min_years_experience",
+                            "certifications",
+                            "languages",
+                        ],
+                        "additionalProperties": False,
                     },
-                    "languages": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
-                },
-                "required": [
-                    "education_level",
-                    "min_years_experience",
-                    "certifications",
-                    "languages",
+                    {"type": "null"},
                 ],
-                "additionalProperties": False,
             },
             "posted_at": {"type": ["string", "null"]},
             "expires_at": {"type": ["string", "null"]},
