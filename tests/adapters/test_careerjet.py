@@ -29,7 +29,7 @@ def _make_config(**overrides: Any) -> SourceConfig:
         "adapter": "careerjet",
         "source_type": SourceType.API,
         "base_url": "https://www.careerjet.co.ke",
-        "config": {"api_key": "test_api_key_123", "location": "Kenya"},
+        "config": {"api_key": "test_api_key_123", "location": "Kenya", "user_ip": "1.2.3.4"},
     }
     defaults.update(overrides)
     return SourceConfig(**defaults)
@@ -225,7 +225,11 @@ class TestFetchListings:
     @respx.mock
     async def test_user_ip_from_config(self) -> None:
         config = _make_config(
-            config={"api_key": "test_api_key_123", "location": "Kenya", "user_ip": "192.168.1.1"},
+            config={
+                "api_key": "test_api_key_123",
+                "location": "Kenya",
+                "user_ip": "192.168.1.1",
+            },
         )
         route = respx.get(CAREERJET_API_URL).mock(return_value=Response(200, json={"jobs": []}))
         adapter = CareerjetAdapter(request_delay=0)
@@ -234,19 +238,25 @@ class TestFetchListings:
         request = route.calls[0].request
         assert request.url.params["user_ip"] == "192.168.1.1"
 
-    @respx.mock
-    async def test_user_ip_default(self) -> None:
-        route = respx.get(CAREERJET_API_URL).mock(return_value=Response(200, json={"jobs": []}))
+    async def test_raises_on_missing_user_ip(self) -> None:
+        """Missing user_ip in config should raise AdapterError."""
+        config = _make_config(config={"api_key": "test_api_key_123", "location": "Kenya"})
         adapter = CareerjetAdapter(request_delay=0)
-        _ = [listing async for listing in adapter.fetch_listings(_make_config())]
-
-        request = route.calls[0].request
-        assert request.url.params["user_ip"] == "127.0.0.1"
+        with pytest.raises(AdapterError) as exc_info:
+            async for _ in adapter.fetch_listings(config):
+                pass
+        assert exc_info.value.retryable is False
+        assert "user_ip" in str(exc_info.value)
 
     @respx.mock
     async def test_locale_from_config(self) -> None:
         config = _make_config(
-            config={"api_key": "test_api_key_123", "location": "Kenya", "locale": "fr_FR"},
+            config={
+                "api_key": "test_api_key_123",
+                "location": "Kenya",
+                "locale": "fr_FR",
+                "user_ip": "1.2.3.4",
+            },
         )
         route = respx.get(CAREERJET_API_URL).mock(return_value=Response(200, json={"jobs": []}))
         adapter = CareerjetAdapter(request_delay=0)
@@ -310,7 +320,11 @@ class TestFetchListings:
     @respx.mock
     async def test_keywords_from_config(self) -> None:
         config = _make_config(
-            config={"api_key": "test_api_key_123", "keywords": "python developer"}
+            config={
+                "api_key": "test_api_key_123",
+                "keywords": "python developer",
+                "user_ip": "1.2.3.4",
+            }
         )
         route = respx.get(CAREERJET_API_URL).mock(return_value=Response(200, json={"jobs": []}))
         adapter = CareerjetAdapter(request_delay=0)
@@ -377,7 +391,7 @@ class TestLiveCareerjetIntegration:
             adapter="careerjet",
             source_type=SourceType.API,
             base_url="https://www.careerjet.co.ke",
-            config={"api_key": api_key, "location": "Kenya"},
+            config={"api_key": api_key, "location": "Kenya", "user_ip": "127.0.0.1"},
         )
         adapter = CareerjetAdapter()
         listings = [listing async for listing in adapter.fetch_listings(config)]
