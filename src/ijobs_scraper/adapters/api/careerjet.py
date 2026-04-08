@@ -50,7 +50,7 @@ class CareerjetAdapter(APIAdapter):
         keywords: Search keywords (optional, default ``""``).
         location: Location filter (optional, default ``"Kenya"``).
         locale: API locale code (optional, default ``"en_GB"``).
-        user_ip: Client IP for API requests (optional, default ``"127.0.0.1"``).
+        user_ip: Client IP for API requests (required).
     """
 
     async def fetch_listings(self, config: SourceConfig) -> AsyncIterator[RawListing]:
@@ -70,6 +70,14 @@ class CareerjetAdapter(APIAdapter):
         location: str = config.config.get("location", DEFAULT_LOCATION)
         locale: str = config.config.get("locale", DEFAULT_LOCALE)
 
+        user_ip: str | None = config.config.get("user_ip")
+        if not user_ip:
+            raise AdapterError(
+                "careerjet",
+                "Careerjet adapter requires 'user_ip' in source config",
+                retryable=False,
+            )
+
         credentials = base64.b64encode(f"{api_key}:".encode()).decode()
         auth_headers: dict[str, str] = {
             "Authorization": f"Basic {credentials}",
@@ -83,7 +91,7 @@ class CareerjetAdapter(APIAdapter):
                 "keywords": keywords,
                 "location": location,
                 "page": page,
-                "user_ip": config.config.get("user_ip", "127.0.0.1"),
+                "user_ip": user_ip,
                 "user_agent": "ijobs-scraper/0.1.0",
                 "locale_code": locale,
             }
