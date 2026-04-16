@@ -330,3 +330,50 @@ class TestLiveEnrichmentPipeline:
         assert len(job.requirements.key_responsibilities) >= 3
         assert len(job.requirements.minimum_qualifications) >= 3
         assert len(job.skills) >= 3
+
+
+class TestMyJobMagEnrichmentLive:
+    """End-to-end: MyJobMag HTML fetch -> OpenAI enrichment -> EnrichedJob."""
+
+    @pytest.mark.live
+    async def test_enrich_myjobmag_listing(self) -> None:
+        openai_key = _load_env_key("OPEN_AI_KEY")
+        if not openai_key:
+            pytest.skip("OPEN_AI_KEY not set (env var or .env.local)")
+
+        from ijobs_scraper.adapters.html.myjobmag import MyJobMagAdapter
+
+        config = SourceConfig(
+            name="MyJobMag Kenya",
+            slug="myjobmag",
+            adapter="myjobmag",
+            source_type=SourceType.HTML,
+            base_url="https://www.myjobmag.co.ke",
+        )
+        adapter = MyJobMagAdapter()
+        listings: list[RawListing] = []
+        try:
+            async for listing in adapter.fetch_listings(config):
+                listings.append(listing)
+                if len(listings) >= 2:
+                    break
+        finally:
+            await adapter.close()
+
+        assert len(listings) >= 1, "MyJobMag returned no listings"
+        raw = listings[0]
+
+        ai = OpenAIProvider(api_key=openai_key)
+        enriched = await enrich(raw, config, ai)
+
+        assert isinstance(enriched, EnrichedJob)
+        assert enriched.title
+        assert enriched.description
+        assert enriched.company_name
+        assert len(enriched.content_hash) == 64
+        assert enriched.source_slug == "myjobmag"
+        assert enriched.category in VALID_CATEGORIES
+        assert enriched.remote_type in VALID_REMOTE_TYPES
+        assert enriched.employment_type in VALID_EMPLOYMENT_TYPES
+        assert isinstance(enriched.skills, list)
+        assert enriched.currency

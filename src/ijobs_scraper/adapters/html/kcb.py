@@ -56,7 +56,7 @@ class KCBAdapter(HTMLAdapter):
             A ``RawListing`` for each career card found.
         """
         base = config.base_url.rstrip("/")
-        url = f"{base}/about/careers"
+        url = f"{base}/careers"
         max_pages = int(config.config.get("max_pages", DEFAULT_MAX_PAGES))
         page = 1
 
@@ -70,7 +70,7 @@ class KCBAdapter(HTMLAdapter):
 
             for card in cards:
                 try:
-                    title_link = card.select_one(".career-card__title a")
+                    title_link = card.select_one("h2 a, .career-card__title a")
                     if title_link is None:
                         logger.debug("Skipping card with no title link on page %d", page)
                         continue
