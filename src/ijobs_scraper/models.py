@@ -51,6 +51,9 @@ class JobRequirements(BaseModel):
     min_years_experience: int | None = None
     certifications: list[str] = Field(default_factory=list)
     languages: list[str] = Field(default_factory=list)
+    key_responsibilities: list[str] = Field(default_factory=list)
+    minimum_qualifications: list[str] = Field(default_factory=list)
+    preferred_qualifications: list[str] = Field(default_factory=list)
 
 
 class EnrichedJob(BaseModel):
@@ -76,6 +79,8 @@ class EnrichedJob(BaseModel):
     expires_at: datetime | None = None
     content_hash: str
     source_slug: str
+    number_of_openings: int | None = None
+    application_instructions: str | None = None
 
 
 class ScrapeResult(BaseModel):

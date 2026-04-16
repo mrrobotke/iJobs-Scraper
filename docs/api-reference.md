@@ -121,6 +121,8 @@ Fully enriched job data after AI extraction and validation.
 | `benefits` | `list[str]` | Extracted benefits |
 | `category` | `str \| None` | Job category from predefined enum |
 | `requirements` | `JobRequirements \| None` | Structured requirements |
+| `number_of_openings` | `int \| None` | Number of open positions (defaults to `1` when the source does not specify) |
+| `application_instructions` | `str \| None` | How to apply (email, portal link, deadline notes, etc.) |
 | `external_url` | `str` | Original source URL |
 | `posted_at` | `datetime \| None` | When the job was posted |
 | `expires_at` | `datetime \| None` | When the job expires |
@@ -153,6 +155,9 @@ Structured requirements extracted from a job listing.
 | `min_years_experience` | `int \| None` | Minimum years of experience |
 | `certifications` | `list[str]` | Required certifications |
 | `languages` | `list[str]` | Required languages |
+| `key_responsibilities` | `list[str]` | Key duties and responsibilities for the role |
+| `minimum_qualifications` | `list[str]` | Must-have qualifications (education, experience, required skills) |
+| `preferred_qualifications` | `list[str]` | Nice-to-have qualifications that strengthen an application |
 
 ### `SourceType`
 

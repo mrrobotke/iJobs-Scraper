@@ -301,7 +301,7 @@ from ijobs_scraper import (
     SourceType,          # Enum: api, html, browser, rss
     RawListing,          # Raw scraped listing before enrichment
     EnrichedJob,         # AI-enriched structured job data
-    JobRequirements,     # Education, experience, certifications, languages
+    JobRequirements,     # Education, experience, certifications, languages, responsibilities, qualifications
     ScrapeResult,        # Scrape run statistics and status
     AIProvider,          # Protocol: host app implements AI extraction
     StorageBackend,      # Protocol: host app implements persistence

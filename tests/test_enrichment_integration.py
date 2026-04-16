@@ -108,6 +108,15 @@ class OpenAIProvider:
         return result
 
 
+@pytest.fixture
+def real_ai_provider() -> OpenAIProvider:
+    """Provide an OpenAIProvider using OPEN_AI_KEY from env or .env.local."""
+    openai_key = _load_env_key("OPEN_AI_KEY")
+    if not openai_key:
+        pytest.skip("OPEN_AI_KEY not set (env var or .env.local)")
+    return OpenAIProvider(api_key=openai_key)
+
+
 class TestLiveEnrichmentPipeline:
     """End-to-end tests: Careerjet fetch -> OpenAI enrichment -> EnrichedJob."""
 
@@ -250,3 +259,74 @@ class TestLiveEnrichmentPipeline:
             f"missing from required={properties - required}, "
             f"extra in required={required - properties}"
         )
+        # New top-level fields must be present
+        assert "number_of_openings" in required
+        assert "application_instructions" in required
+        # New requirements sub-object fields must be required in the anyOf object branch
+        req_branch = schema["properties"]["requirements"]["anyOf"][0]
+        req_required = set(req_branch["required"])
+        assert "key_responsibilities" in req_required
+        assert "minimum_qualifications" in req_required
+        assert "preferred_qualifications" in req_required
+
+    @pytest.mark.live
+    async def test_enriched_description_is_markdown(self, real_ai_provider: OpenAIProvider) -> None:
+        """Verify the rewritten description has Markdown headings and bullets."""
+        listing = RawListing(
+            external_url="https://example.com/job/1",
+            raw_text="Software Engineer. Python. 5 years experience required.",
+            company_name="Test Corp",
+        )
+        source = SourceConfig(
+            name="Test Corp",
+            slug="test",
+            adapter="test",
+            source_type=SourceType.API,
+            base_url="https://example.com",
+        )
+        job = await enrich(listing, source, real_ai_provider)
+        assert "##" in job.description, "Description should have Markdown headings"
+        assert "- " in job.description, "Description should have bullet points"
+        assert len(job.description.split()) >= 100, "Description should be substantive"
+
+    @pytest.mark.live
+    async def test_number_of_openings_defaults_to_1_live(
+        self, real_ai_provider: OpenAIProvider
+    ) -> None:
+        listing = RawListing(
+            external_url="https://x.com/j/1",
+            raw_text="Software Engineer role at Safaricom.",
+            company_name="Safaricom",
+        )
+        source = SourceConfig(
+            name="Safaricom",
+            slug="safaricom",
+            adapter="test",
+            source_type=SourceType.API,
+            base_url="https://x.com",
+        )
+        job = await enrich(listing, source, real_ai_provider)
+        assert job.number_of_openings is not None
+        assert job.number_of_openings >= 1
+
+    @pytest.mark.live
+    async def test_requirements_inferred_when_absent_live(
+        self, real_ai_provider: OpenAIProvider
+    ) -> None:
+        listing = RawListing(
+            external_url="https://x.com/j/2",
+            raw_text="Senior Data Analyst needed.",
+            company_name="KCB Bank",
+        )
+        source = SourceConfig(
+            name="KCB Bank",
+            slug="kcb",
+            adapter="test",
+            source_type=SourceType.API,
+            base_url="https://x.com",
+        )
+        job = await enrich(listing, source, real_ai_provider)
+        assert job.requirements is not None
+        assert len(job.requirements.key_responsibilities) >= 3
+        assert len(job.requirements.minimum_qualifications) >= 3
+        assert len(job.skills) >= 3

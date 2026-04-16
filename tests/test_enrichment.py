@@ -2,7 +2,7 @@
 
 import pytest
 
-from ijobs_scraper.enrichment import clean_content, enrich
+from ijobs_scraper.enrichment import MAX_CONTENT_LENGTH, clean_content, enrich
 from ijobs_scraper.exceptions import EnrichmentError
 from ijobs_scraper.models import RawListing, SourceConfig, SourceType
 
@@ -67,10 +67,10 @@ class TestCleanContent:
     def test_truncation(self) -> None:
         listing = RawListing(
             external_url="https://example.com/job/1",
-            raw_text="x" * 20_000,
+            raw_text="x" * (MAX_CONTENT_LENGTH + 5_000),
         )
         content = clean_content(listing)
-        assert len(content) == 15_000
+        assert len(content) == MAX_CONTENT_LENGTH
 
     def test_html_tag_stripping(self) -> None:
         listing = RawListing(
@@ -82,6 +82,31 @@ class TestCleanContent:
         assert "<div>" not in content
         assert "Hello" in content
         assert "World" in content
+
+    def test_html_block_normalization(self) -> None:
+        listing = RawListing(
+            external_url="https://example.com/job/1",
+            raw_html="<li><b>SQL</b> skills</li><p>Lead team</p>",
+        )
+        content = clean_content(listing)
+        assert "<" not in content
+        lines = [line for line in content.splitlines() if line.strip()]
+        # Inline tags (<b>) should not split a line; block tags separate lines
+        assert any("SQL skills" in line for line in lines)
+        assert any("Lead team" in line for line in lines)
+
+    def test_json_with_embedded_html_normalized(self) -> None:
+        listing = RawListing(
+            external_url="https://example.com/job/1",
+            raw_json={
+                "title": "Engineer",
+                "content": "<p>We need <b>Python</b> skills.</p>",
+            },
+        )
+        content = clean_content(listing)
+        assert "<p>" not in content
+        assert "<b>" not in content
+        assert "Python" in content
 
 
 class TestEnrich:
@@ -206,3 +231,134 @@ class TestEnrich:
         job = await enrich(listing, _make_source(), ai)
         assert job.posted_at is not None
         assert job.expires_at is None  # invalid date → None
+
+    async def test_number_of_openings_extracted(self) -> None:
+        response = {
+            "title": "Dev",
+            "description": "Role",
+            "company_name": "Corp",
+            "company_website": None,
+            "location": None,
+            "remote_type": "onsite",
+            "employment_type": "full_time",
+            "experience_level": None,
+            "salary_min": None,
+            "salary_max": None,
+            "currency": "KES",
+            "skills": [],
+            "benefits": [],
+            "category": "technology-engineering",
+            "requirements": None,
+            "posted_at": None,
+            "expires_at": None,
+            "number_of_openings": 2,
+            "application_instructions": None,
+        }
+        ai = StubAIProvider(response=response)
+        listing = RawListing(
+            external_url="https://example.com/job/1",
+            raw_json={"title": "Dev"},
+        )
+        job = await enrich(listing, _make_source(), ai)
+        assert job.number_of_openings == 2
+
+    async def test_number_of_openings_defaults_to_1(self) -> None:
+        response = {
+            "title": "Dev",
+            "description": "Role",
+            "company_name": "Corp",
+            "company_website": None,
+            "location": None,
+            "remote_type": "onsite",
+            "employment_type": "full_time",
+            "experience_level": None,
+            "salary_min": None,
+            "salary_max": None,
+            "currency": "KES",
+            "skills": [],
+            "benefits": [],
+            "category": "technology-engineering",
+            "requirements": None,
+            "posted_at": None,
+            "expires_at": None,
+            "number_of_openings": None,
+            "application_instructions": None,
+        }
+        ai = StubAIProvider(response=response)
+        listing = RawListing(
+            external_url="https://example.com/job/1",
+            raw_json={"title": "Dev"},
+        )
+        job = await enrich(listing, _make_source(), ai)
+        assert job.number_of_openings == 1
+
+    async def test_requirements_new_fields_populated(self) -> None:
+        response = {
+            "title": "Dev",
+            "description": "Role",
+            "company_name": "Corp",
+            "company_website": None,
+            "location": None,
+            "remote_type": "onsite",
+            "employment_type": "full_time",
+            "experience_level": None,
+            "salary_min": None,
+            "salary_max": None,
+            "currency": "KES",
+            "skills": [],
+            "benefits": [],
+            "category": "technology-engineering",
+            "requirements": {
+                "education_level": None,
+                "min_years_experience": None,
+                "certifications": [],
+                "languages": [],
+                "key_responsibilities": ["Foo"],
+                "minimum_qualifications": ["Bar"],
+                "preferred_qualifications": ["Baz"],
+            },
+            "posted_at": None,
+            "expires_at": None,
+            "number_of_openings": 1,
+            "application_instructions": None,
+        }
+        ai = StubAIProvider(response=response)
+        listing = RawListing(
+            external_url="https://example.com/job/1",
+            raw_json={"title": "Dev"},
+        )
+        job = await enrich(listing, _make_source(), ai)
+        assert job.requirements is not None
+        assert job.requirements.key_responsibilities == ["Foo"]
+        assert job.requirements.minimum_qualifications == ["Bar"]
+        assert job.requirements.preferred_qualifications == ["Baz"]
+
+    async def test_application_instructions_stored(self) -> None:
+        response = {
+            "title": "Dev",
+            "description": "Role",
+            "company_name": "Corp",
+            "company_website": None,
+            "location": None,
+            "remote_type": "onsite",
+            "employment_type": "full_time",
+            "experience_level": None,
+            "salary_min": None,
+            "salary_max": None,
+            "currency": "KES",
+            "skills": [],
+            "benefits": [],
+            "category": "technology-engineering",
+            "requirements": None,
+            "posted_at": None,
+            "expires_at": None,
+            "number_of_openings": 1,
+            "application_instructions": "Email CV to hr@corp.com",
+        }
+        ai = StubAIProvider(response=response)
+        listing = RawListing(
+            external_url="https://example.com/job/1",
+            raw_json={"title": "Dev"},
+        )
+        job = await enrich(listing, _make_source(), ai)
+        assert job.application_instructions == "Email CV to hr@corp.com"

@@ -146,6 +146,12 @@ class TestJobRequirements:
         assert req.certifications == ["PMP"]
         assert req.languages == ["English", "Swahili"]
 
+    def test_job_requirements_new_fields_default_empty(self) -> None:
+        req = JobRequirements()
+        assert req.key_responsibilities == []
+        assert req.minimum_qualifications == []
+        assert req.preferred_qualifications == []
+
 
 class TestEnrichedJob:
     def test_required_fields(self) -> None:
@@ -206,6 +212,18 @@ class TestEnrichedJob:
                 source_slug="test",
                 remote_type="invalid",  # type: ignore[arg-type]
             )
+
+    def test_enriched_job_new_fields_default_none(self) -> None:
+        job = EnrichedJob(
+            title="t",
+            description="d",
+            company_name="c",
+            external_url="https://x.com",
+            content_hash="abc" * 21,
+            source_slug="s",
+        )
+        assert job.number_of_openings is None
+        assert job.application_instructions is None
 
 
 class TestScrapeResult:
