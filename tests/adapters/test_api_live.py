@@ -86,13 +86,10 @@ class TestReliefWebLive:
             await adapter.close()
             pytest.skip("No listings available from ReliefWeb")
 
-        # Strip raw_html so fetch_detail actually fetches from the API
-        # (fetch_listings already populates raw_html from body-html field,
-        # which causes fetch_detail to early-return without hitting the API)
         listing_without_html = first.model_copy(update={"raw_html": None})
         detail = await adapter.fetch_detail(listing_without_html, config)
         await adapter.close()
 
         assert detail.external_url == first.external_url
-        assert detail.title
         assert detail.raw_html
+        assert detail.title
