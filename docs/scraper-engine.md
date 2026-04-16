@@ -330,6 +330,8 @@ class EnrichedJob(BaseModel):
     benefits: list[str] = []
     category: str | None = None
     requirements: JobRequirements | None = None
+    number_of_openings: int | None = None  # Post-validated to default to 1 when absent
+    application_instructions: str | None = None
     external_url: str
     posted_at: datetime | None = None
     expires_at: datetime | None = None
@@ -341,6 +343,9 @@ class JobRequirements(BaseModel):
     min_years_experience: int | None = None
     certifications: list[str] = []
     languages: list[str] = []
+    key_responsibilities: list[str] = []
+    minimum_qualifications: list[str] = []
+    preferred_qualifications: list[str] = []
 ```
 
 ### 5.4 ScrapeResult

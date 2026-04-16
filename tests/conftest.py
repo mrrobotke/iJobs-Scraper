@@ -28,9 +28,28 @@ class StubAIProvider:
             "skills": ["Python", "SQL"],
             "benefits": [],
             "category": "technology-engineering",
-            "requirements": None,
+            "requirements": {
+                "education_level": "Bachelor's",
+                "min_years_experience": 3,
+                "certifications": [],
+                "languages": ["English"],
+                "key_responsibilities": [
+                    "Lead technical design sessions",
+                    "Mentor junior engineers",
+                ],
+                "minimum_qualifications": [
+                    "Bachelor's degree in Computer Science or related field",
+                    "3+ years Python experience",
+                ],
+                "preferred_qualifications": [
+                    "Master's degree preferred",
+                    "Experience with FastAPI",
+                ],
+            },
             "posted_at": None,
             "expires_at": None,
+            "number_of_openings": 1,
+            "application_instructions": None,
         }
 
     async def structured_extract(

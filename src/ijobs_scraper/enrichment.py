@@ -10,32 +10,143 @@ import json
 from datetime import datetime
 from typing import Any
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
+from bs4.element import NavigableString
 
 from ijobs_scraper.dedup import compute_content_hash
 from ijobs_scraper.exceptions import EnrichmentError
 from ijobs_scraper.models import EnrichedJob, JobRequirements, RawListing, SourceConfig
 from ijobs_scraper.protocols import AIProvider
 
-MAX_CONTENT_LENGTH = 15_000
+MAX_CONTENT_LENGTH = 40_000
+
+_BLOCK_TAGS = {
+    "p",
+    "div",
+    "li",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "br",
+    "tr",
+    "section",
+    "article",
+    "header",
+    "footer",
+    "ul",
+    "ol",
+}
+
+
+def _html_to_structured_text(html: str) -> str:
+    """Convert HTML to text preserving block-level structure, not inline breaks."""
+    soup = BeautifulSoup(html, "lxml")
+    parts: list[str] = []
+    for node in soup.descendants:
+        if isinstance(node, NavigableString):
+            parts.append(str(node))
+        elif isinstance(node, Tag) and node.name in _BLOCK_TAGS:
+            parts.append("\n")
+    raw = "".join(parts)
+    # Collapse intra-line whitespace while preserving block boundaries.
+    lines = (" ".join(line.split()) for line in raw.splitlines())
+    return "\n".join(line for line in lines if line)
+
+
+def _contains_html(text: str) -> bool:
+    """Heuristic: text likely contains HTML markup."""
+    return "<" in text and ">" in text
+
+
+def _normalise_json_values(obj: Any) -> Any:
+    """Recursively strip HTML from string values inside a JSON structure.
+
+    Walks dicts and lists, normalising any string leaf that looks like HTML.
+    Strings that lack the combination of ``<`` and ``>`` (e.g. ``"< 3 years"``,
+    ``"salary > 100k"``, ``"hr@company.com"``) pass through untouched so the
+    surrounding text is not silently destroyed.
+    """
+    if isinstance(obj, dict):
+        return {k: _normalise_json_values(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_normalise_json_values(i) for i in obj]
+    if isinstance(obj, str) and _contains_html(obj):
+        return _html_to_structured_text(obj)
+    return obj
+
 
 SYSTEM_PROMPT = """\
-You are a job listing data extractor and SEO optimizer for the African job market.
+You are a senior HR content writer and job data extractor for the African job market.
 
-Given raw job listing content (HTML, JSON, or text), extract all fields into the
-required JSON schema. Follow these rules:
+Your dual role is to (1) extract structured fields from raw job content AND
+(2) actively rewrite and enhance the description into a professional, well-formatted
+job listing that candidates will want to read.
 
-1. TITLE: Create a clear, SEO-friendly title. Remove company name from title.
-   Keep under 200 characters.
-2. DESCRIPTION: Clean up HTML, remove navigation/footer cruft, format with
-   proper paragraphs. Optimize for search visibility.
-3. LOCATION: Normalize to "City, Country" format. Default country is Kenya.
-4. SALARY: Extract min/max as integers. Convert monthly to annual if specified.
-   Default currency is KES unless explicitly stated otherwise.
-5. SKILLS: Extract specific technical and soft skills mentioned.
-6. CATEGORY: Map to the closest matching category from the enum list.
-7. EMPLOYMENT TYPE: Infer from context if not explicit.
-8. If a field cannot be determined, use null.\
+CONTENT ENHANCEMENT RULES:
+- You are NOT just copying content. You are improving it. Write like a skilled recruiter.
+- If the raw content is sparse or poorly written, extrapolate professionally from the
+  job title, company name, category, and industry norms. Never return thin, generic text.
+- Use Markdown formatting throughout. Never return a plain paragraph blob.
+
+FIELD-SPECIFIC RULES:
+
+1. TITLE
+   - SEO-friendly, clear, specific. Remove company name from the title.
+   - Good: "Senior Data Analyst - Finance" Bad: "Senior Data Analyst at KCB"
+   - Max 200 characters.
+
+2. DESCRIPTION
+   - MUST be structured Markdown with these sections (use ## headings):
+       ## About the Role
+       2-4 sentence intro: what this role is, why it matters, what impact the person
+       will have. Write this even if raw content lacks it - infer from context.
+
+       ## Key Responsibilities
+       Bullet list (- item) of 5-10 specific responsibilities. Extract from content;
+       infer plausible duties from this title and category if content is thin.
+
+       ## Requirements
+       Bullet list of 5-8 minimum requirements (education, experience, skills).
+       Infer from job title, seniority, and industry norms if not stated.
+
+       ## What We Offer
+       Bullet list of benefits. Infer plausible benefits for this company type if absent.
+   - Minimum 350 words. Expand with inferred professional content if raw is short.
+   - Remove all navigation, footer, cookie banners, and unrelated HTML cruft.
+
+3. LOCATION - Normalize to "City, Country". Default country: Kenya.
+
+4. SALARY - Extract min/max as annual integers. Multiply monthly x 12.
+   Default currency: KES unless explicitly stated.
+
+5. SKILLS - Extract specific technical AND soft skills. Minimum 5.
+   Good: ["Python", "SQL", "data visualization", "stakeholder management"]
+   Bad: ["computer skills", "communication"]
+
+6. REQUIREMENTS (structured sub-object):
+   - education_level: Highest degree required. Infer from seniority if absent.
+   - min_years_experience: Integer. Infer from seniority if absent
+     (junior=0-2, mid=3-5, senior=5-8, lead=8+).
+   - certifications: Specific certs. Empty array if none.
+   - languages: Always include "English" for Kenyan roles.
+   - key_responsibilities: Array of 5-10 bullet strings (same as ## Key Responsibilities).
+   - minimum_qualifications: Array of 5-8 must-have requirement strings.
+   - preferred_qualifications: Array of 3-5 nice-to-have strings. Infer if absent.
+
+7. BENEFITS - Minimum 3. Infer from company type if not stated.
+
+8. CATEGORY - Closest matching enum value.
+
+9. NUMBER OF OPENINGS - Integer. Default 1 if not stated.
+
+10. APPLICATION INSTRUCTIONS - Exact how-to-apply text if present, else null.
+
+11. EMPLOYMENT TYPE / REMOTE TYPE - Infer from context. Default: full_time / onsite.
+
+12. POSTED AT / EXPIRES AT - ISO 8601 strings if found, else null.\
 """
 
 EXTRACTION_SCHEMA: dict[str, Any] = {
@@ -61,6 +172,8 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
             "requirements",
             "posted_at",
             "expires_at",
+            "number_of_openings",
+            "application_instructions",
         ],
         "properties": {
             "title": {"type": "string"},
@@ -117,12 +230,27 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
                                 "type": "array",
                                 "items": {"type": "string"},
                             },
+                            "key_responsibilities": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                            "minimum_qualifications": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                            "preferred_qualifications": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
                         },
                         "required": [
                             "education_level",
                             "min_years_experience",
                             "certifications",
                             "languages",
+                            "key_responsibilities",
+                            "minimum_qualifications",
+                            "preferred_qualifications",
                         ],
                         "additionalProperties": False,
                     },
@@ -131,6 +259,8 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
             },
             "posted_at": {"type": ["string", "null"]},
             "expires_at": {"type": ["string", "null"]},
+            "number_of_openings": {"type": ["integer", "null"]},
+            "application_instructions": {"type": ["string", "null"]},
         },
         "additionalProperties": False,
     },
@@ -138,15 +268,18 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
 
 
 def clean_content(raw: RawListing) -> str:
-    """Extract text content from a raw listing, stripping HTML and truncating.
+    """Extract text content from a raw listing, applying block-aware HTML normalisation.
 
-    Priority: raw_json > raw_html > raw_text. Truncates to 15,000 chars.
+    Priority: raw_json > raw_html > raw_text. Truncates to 40,000 chars.
+    For raw_json, recurses into the structure and normalises only string
+    values that look like HTML, so non-HTML strings containing ``<`` or ``>``
+    (salary ranges, emails, etc.) are preserved verbatim.
     """
     if raw.raw_json is not None:
-        text = json.dumps(raw.raw_json, indent=2, default=str)
+        normalised = _normalise_json_values(raw.raw_json)
+        text = json.dumps(normalised, indent=2, default=str)
     elif raw.raw_html is not None:
-        soup = BeautifulSoup(raw.raw_html, "lxml")
-        text = " ".join(soup.get_text(separator=" ", strip=True).split())
+        text = _html_to_structured_text(raw.raw_html)
     elif raw.raw_text is not None:
         text = raw.raw_text
     else:
@@ -217,7 +350,7 @@ async def enrich(
     )
 
     try:
-        return EnrichedJob(
+        enriched = EnrichedJob(
             title=extracted["title"],
             description=extracted["description"],
             company_name=extracted["company_name"],
@@ -238,6 +371,14 @@ async def enrich(
             expires_at=_parse_datetime(extracted.get("expires_at")),
             content_hash=content_hash,
             source_slug=source.slug,
+            number_of_openings=extracted.get("number_of_openings"),
+            application_instructions=extracted.get("application_instructions"),
         )
     except Exception as exc:
         raise EnrichmentError(f"Failed to build EnrichedJob: {exc}") from exc
+
+    # Post-validate: default number_of_openings to 1 if model returned null
+    if enriched.number_of_openings is None:
+        enriched = enriched.model_copy(update={"number_of_openings": 1})
+
+    return enriched
