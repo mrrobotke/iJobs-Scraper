@@ -53,7 +53,7 @@ class TestReliefWebLive:
         listings = []
         async for listing in adapter.fetch_listings(config):
             listings.append(listing)
-            if len(listings) >= 5:
+            if len(listings) >= 3:
                 break
         await adapter.close()
 
@@ -83,10 +83,16 @@ class TestReliefWebLive:
             break
 
         if first is None:
+            await adapter.close()
             pytest.skip("No listings available from ReliefWeb")
 
-        detail = await adapter.fetch_detail(first, config)
+        # Strip raw_html so fetch_detail actually fetches from the API
+        # (fetch_listings already populates raw_html from body-html field,
+        # which causes fetch_detail to early-return without hitting the API)
+        listing_without_html = first.model_copy(update={"raw_html": None})
+        detail = await adapter.fetch_detail(listing_without_html, config)
         await adapter.close()
 
         assert detail.external_url == first.external_url
         assert detail.title
+        assert detail.raw_html
