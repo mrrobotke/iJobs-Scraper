@@ -65,8 +65,9 @@ def _normalise_json_values(obj: Any) -> Any:
     """Recursively strip HTML from string values inside a JSON structure.
 
     Walks dicts and lists, normalising any string leaf that looks like HTML.
-    Non-HTML strings (e.g. ``"< 3 years"``, ``"name <email@x.com>"``) pass
-    through untouched so the surrounding text is not silently destroyed.
+    Strings that lack the combination of ``<`` and ``>`` (e.g. ``"< 3 years"``,
+    ``"salary > 100k"``, ``"hr@company.com"``) pass through untouched so the
+    surrounding text is not silently destroyed.
     """
     if isinstance(obj, dict):
         return {k: _normalise_json_values(v) for k, v in obj.items()}
