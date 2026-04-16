@@ -61,6 +61,22 @@ def _contains_html(text: str) -> bool:
     return "<" in text and ">" in text
 
 
+def _normalise_json_values(obj: Any) -> Any:
+    """Recursively strip HTML from string values inside a JSON structure.
+
+    Walks dicts and lists, normalising any string leaf that looks like HTML.
+    Non-HTML strings (e.g. ``"< 3 years"``, ``"name <email@x.com>"``) pass
+    through untouched so the surrounding text is not silently destroyed.
+    """
+    if isinstance(obj, dict):
+        return {k: _normalise_json_values(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_normalise_json_values(i) for i in obj]
+    if isinstance(obj, str) and _contains_html(obj):
+        return _html_to_structured_text(obj)
+    return obj
+
+
 SYSTEM_PROMPT = """\
 You are a senior HR content writer and job data extractor for the African job market.
 
@@ -254,12 +270,13 @@ def clean_content(raw: RawListing) -> str:
     """Extract text content from a raw listing, applying block-aware HTML normalisation.
 
     Priority: raw_json > raw_html > raw_text. Truncates to 40,000 chars.
-    For raw_json, scans for HTML-bearing string values and normalises them.
+    For raw_json, recurses into the structure and normalises only string
+    values that look like HTML, so non-HTML strings containing ``<`` or ``>``
+    (salary ranges, emails, etc.) are preserved verbatim.
     """
     if raw.raw_json is not None:
-        serialised = json.dumps(raw.raw_json, indent=2, default=str)
-        # If the JSON contains embedded HTML, normalise it
-        text = _html_to_structured_text(serialised) if _contains_html(serialised) else serialised
+        normalised = _normalise_json_values(raw.raw_json)
+        text = json.dumps(normalised, indent=2, default=str)
     elif raw.raw_html is not None:
         text = _html_to_structured_text(raw.raw_html)
     elif raw.raw_text is not None:

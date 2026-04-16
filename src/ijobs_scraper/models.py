@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SourceType(StrEnum):
@@ -81,6 +81,13 @@ class EnrichedJob(BaseModel):
     source_slug: str
     number_of_openings: int | None = None
     application_instructions: str | None = None
+
+    @field_validator("number_of_openings")
+    @classmethod
+    def _validate_openings(cls, v: int | None) -> int | None:
+        if v is not None and v < 1:
+            raise ValueError("number_of_openings must be >= 1 when set")
+        return v
 
 
 class ScrapeResult(BaseModel):

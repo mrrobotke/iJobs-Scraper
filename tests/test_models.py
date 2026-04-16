@@ -225,6 +225,30 @@ class TestEnrichedJob:
         assert job.number_of_openings is None
         assert job.application_instructions is None
 
+    def test_number_of_openings_rejects_zero(self) -> None:
+        with pytest.raises(ValidationError):
+            EnrichedJob(
+                title="X",
+                description="X",
+                company_name="X",
+                external_url="https://example.com",
+                content_hash="abc" * 21,
+                source_slug="test",
+                number_of_openings=0,
+            )
+
+    def test_number_of_openings_rejects_negative(self) -> None:
+        with pytest.raises(ValidationError):
+            EnrichedJob(
+                title="X",
+                description="X",
+                company_name="X",
+                external_url="https://example.com",
+                content_hash="abc" * 21,
+                source_slug="test",
+                number_of_openings=-3,
+            )
+
 
 class TestScrapeResult:
     def test_required_fields(self) -> None:
