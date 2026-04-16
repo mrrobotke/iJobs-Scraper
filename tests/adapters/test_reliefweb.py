@@ -15,7 +15,7 @@ from ijobs_scraper.adapters.api.reliefweb import (
 from ijobs_scraper.models import RawListing, SourceConfig, SourceType
 
 API_BASE = "https://api.reliefweb.int"
-JOBS_URL = f"{API_BASE}/v1/jobs"
+JOBS_URL = f"{API_BASE}/v2/jobs"
 
 
 def _make_config() -> SourceConfig:
@@ -332,7 +332,7 @@ class TestFetchDetail:
 
     @respx.mock
     async def test_fetches_when_no_html(self) -> None:
-        detail_url = f"{API_BASE}/v1/jobs/1001"
+        detail_url = f"{API_BASE}/v2/jobs/1001"
         respx.get(detail_url).mock(return_value=httpx.Response(200, json=MOCK_SINGLE_JOB))
 
         adapter = ReliefWebAdapter(request_delay=0)
@@ -366,7 +366,7 @@ class TestCanHandleUrl:
 
     def test_api_reliefweb_url(self) -> None:
         adapter = ReliefWebAdapter()
-        assert adapter.can_handle_url("https://api.reliefweb.int/v1/jobs")
+        assert adapter.can_handle_url("https://api.reliefweb.int/v2/jobs")
 
     def test_non_reliefweb_url(self) -> None:
         adapter = ReliefWebAdapter()

@@ -67,7 +67,7 @@ class ReliefWebAdapter(APIAdapter):
             A ``RawListing`` for each job matching the Kenya filter.
         """
         base = config.base_url.rstrip("/")
-        url = f"{base}/v1/jobs"
+        url = f"{base}/v2/jobs"
         appname = self._require_config(config, "appname")
         offset = 0
         page = 0
@@ -164,7 +164,7 @@ class ReliefWebAdapter(APIAdapter):
             return listing
 
         base = config.base_url.rstrip("/")
-        url = f"{base}/v1/jobs/{listing.external_id}"
+        url = f"{base}/v2/jobs/{listing.external_id}"
         appname = self._require_config(config, "appname")
 
         params: dict[str, Any] = {

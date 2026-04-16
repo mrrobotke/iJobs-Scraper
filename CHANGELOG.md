@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-04-16
+
+### Added
+- `.env.example` template with placeholder values for all environment variables
+- Live integration tests for API adapters (`tests/adapters/test_api_live.py`)
+- ReliefWeb appname configuration (`RELIEFWEB_APPNAME`)
+
+### Fixed
+- ReliefWeb adapter upgraded from decommissioned v1 API to v2 API (410 Gone)
+
 ## [0.1.1] - 2026-04-08
 
 ### Changed
@@ -40,5 +50,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Step-by-step adapter contributor guide with templates for all 3 adapter types
 - Standalone, FastAPI, and iJobs integration examples
 
+[0.1.3]: https://github.com/mrrobotke/ijobs-scraper/releases/tag/v0.1.3
 [0.1.1]: https://github.com/mrrobotke/ijobs-scraper/releases/tag/v0.1.1
 [0.1.0]: https://github.com/mrrobotke/ijobs-scraper/releases/tag/v0.1.0
