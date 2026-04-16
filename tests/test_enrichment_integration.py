@@ -352,11 +352,13 @@ class TestMyJobMagEnrichmentLive:
         )
         adapter = MyJobMagAdapter()
         listings: list[RawListing] = []
-        async for listing in adapter.fetch_listings(config):
-            listings.append(listing)
-            if len(listings) >= 2:
-                break
-        await adapter.close()
+        try:
+            async for listing in adapter.fetch_listings(config):
+                listings.append(listing)
+                if len(listings) >= 2:
+                    break
+        finally:
+            await adapter.close()
 
         assert len(listings) >= 1, "MyJobMag returned no listings"
         raw = listings[0]
