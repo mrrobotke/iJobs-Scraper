@@ -18,10 +18,15 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
+
+import httpx
+from bs4 import Tag
 
 from ijobs_scraper._registry import AdapterRegistry
 from ijobs_scraper.adapters.base import HTMLAdapter
+from ijobs_scraper.application_destination import is_safe_application_destination
+from ijobs_scraper.exceptions import RateLimitError
 from ijobs_scraper.models import RawListing, SourceConfig
 
 if TYPE_CHECKING:
@@ -30,6 +35,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_PAGES = 200
+MAX_APPLICATION_REDIRECTS = 3
 _HOST = "myjobmag.co.ke"
 
 
@@ -41,6 +47,79 @@ class MyJobMagAdapter(HTMLAdapter):
     rendered as ``<li>`` elements within a ``.job-list__items`` container,
     with URL-based pagination via ``?page=N``.
     """
+
+    async def _resolve_application_url(
+        self,
+        detail: Tag | None,
+        *,
+        listing_url: str,
+    ) -> str | None:
+        """Resolve MyJobMag's internal apply redirect without visiting its target.
+
+        MyJobMag hides the employer's precise application destination behind an
+        internal ``/apply-now/<id>`` redirect. Request only that same-origin URL with
+        redirect following disabled, then validate the ``Location`` header before
+        exposing it as a candidate-facing destination.
+        """
+        if detail is None:
+            return None
+
+        link = detail.select_one('a[href*="/apply-now/"]')
+        if link is None:
+            return None
+
+        href = str(link.get("href", "")).strip()
+        redirect_url = urljoin(listing_url, href)
+        if not self._validate_url(redirect_url, _HOST):
+            logger.warning("Rejecting application redirect outside MyJobMag: %s", redirect_url)
+            return None
+
+        client = await self._ensure_client()
+        current_url = redirect_url
+        for _ in range(MAX_APPLICATION_REDIRECTS):
+            await self._rate_limit(detail=True)
+            response = await client.get(current_url, follow_redirects=False)
+            if response.status_code == 429:
+                retry_after = response.headers.get("Retry-After")
+                raise RateLimitError(
+                    self.__class__.__name__,
+                    int(retry_after) if retry_after and retry_after.isdigit() else None,
+                )
+            if response.status_code not in {301, 302, 303, 307, 308}:
+                logger.warning(
+                    "MyJobMag application endpoint returned %d for %s",
+                    response.status_code,
+                    current_url,
+                )
+                return None
+
+            location = response.headers.get("Location")
+            if not isinstance(location, str) or not location:
+                return None
+
+            candidate_url = urljoin(current_url, location)
+            if is_safe_application_destination(candidate_url, source_url=listing_url):
+                return candidate_url
+
+            # MyJobMag may first canonicalise its own hostname before exposing the
+            # employer target. Follow only another same-origin /apply-now/ hop.
+            if not self._validate_url(candidate_url, _HOST):
+                logger.warning("Rejecting unsafe MyJobMag application target: %s", candidate_url)
+                return None
+            if not urlsplit(candidate_url).path.startswith("/apply-now/"):
+                logger.warning(
+                    "Rejecting non-application MyJobMag redirect target: %s",
+                    candidate_url,
+                )
+                return None
+            current_url = candidate_url
+
+        logger.warning(
+            "MyJobMag application redirect exceeded %d same-source hops for %s",
+            MAX_APPLICATION_REDIRECTS,
+            redirect_url,
+        )
+        return None
 
     async def fetch_listings(self, config: SourceConfig) -> AsyncIterator[RawListing]:
         """Fetch job listings from MyJobMag Kenya.
@@ -132,7 +211,20 @@ class MyJobMagAdapter(HTMLAdapter):
         detail = soup.select_one(".job-detail")
         html = str(detail) if detail else str(soup.body or soup)
 
-        return listing.model_copy(update={"raw_html": html})
+        application_url = None
+        try:
+            application_url = await self._resolve_application_url(
+                detail,
+                listing_url=listing.external_url,
+            )
+        except httpx.HTTPError:
+            logger.warning(
+                "Unable to resolve MyJobMag application redirect for %s",
+                listing.external_url,
+                exc_info=True,
+            )
+
+        return listing.model_copy(update={"raw_html": html, "application_url": application_url})
 
     def can_handle_url(self, url: str) -> bool:
         """Check if this URL belongs to MyJobMag Kenya.

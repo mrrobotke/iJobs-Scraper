@@ -30,6 +30,8 @@ def test_all_exports() -> None:
         "SourceType",
         "StorageBackend",
         "get_due_sources",
+        "is_safe_application_destination",
+        "resolve_application_destination",
     }
     assert set(ijobs_scraper.__all__) == expected
 

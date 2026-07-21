@@ -139,6 +139,84 @@ class TestFetchDetail:
         assert "CPA-K certification" in result.raw_html
 
     @respx.mock
+    async def test_resolves_apply_now_redirect_without_following_external_target(self) -> None:
+        detail_url = f"{BASE_URL}/job/procurement-coordinator-200002"
+        apply_now_url = f"{BASE_URL}/apply-now/1283419"
+        employer_url = "https://seventwentyholdings.co.ke/jobs/procurement-coordinator"
+        detail_html = """
+        <html><body><div class="job-detail">
+          <h2>Method of Application</h2>
+          <div class="mag-b">
+            Interested and qualified? Go to
+            <a href="/apply-now/1283419">SevenTwenty Holdings</a> to apply.
+          </div>
+        </div></body></html>
+        """
+        respx.get(detail_url).mock(return_value=httpx.Response(200, text=detail_html))
+        redirect_route = respx.get(apply_now_url).mock(
+            return_value=httpx.Response(302, headers={"Location": employer_url})
+        )
+        adapter = MyJobMagAdapter(request_delay=0, jitter=0)
+        listing = RawListing(external_url=detail_url, title="Procurement Coordinator")
+
+        result = await adapter.fetch_detail(listing, _make_config())
+
+        assert result.application_url == employer_url
+        assert redirect_route.call_count == 1
+
+    @respx.mock
+    async def test_allows_bounded_same_source_canonical_redirect(self) -> None:
+        detail_url = "https://myjobmag.co.ke/job/procurement-coordinator-200004"
+        apply_now_url = "https://myjobmag.co.ke/apply-now/1283421"
+        canonical_apply_now_url = "https://www.myjobmag.co.ke/apply-now/1283421"
+        employer_url = "https://seventwentyholdings.co.ke/jobs/procurement-coordinator"
+        detail_html = """
+        <html><body><div class="job-detail">
+          <h2>Method of Application</h2>
+          <a href="/apply-now/1283421">Apply</a>
+        </div></body></html>
+        """
+        respx.get(detail_url).mock(return_value=httpx.Response(200, text=detail_html))
+        first_redirect = respx.get(apply_now_url).mock(
+            return_value=httpx.Response(301, headers={"Location": canonical_apply_now_url})
+        )
+        second_redirect = respx.get(canonical_apply_now_url).mock(
+            return_value=httpx.Response(302, headers={"Location": employer_url})
+        )
+        adapter = MyJobMagAdapter(request_delay=0, jitter=0)
+        listing = RawListing(external_url=detail_url, title="Procurement Coordinator")
+
+        result = await adapter.fetch_detail(listing, _make_config())
+
+        assert result.application_url == employer_url
+        assert first_redirect.call_count == 1
+        assert second_redirect.call_count == 1
+
+    @respx.mock
+    async def test_rejects_apply_now_redirect_back_to_myjobmag(self) -> None:
+        detail_url = f"{BASE_URL}/job/procurement-coordinator-200003"
+        apply_now_url = f"{BASE_URL}/apply-now/1283420"
+        detail_html = """
+        <html><body><div class="job-detail">
+          <h2>Method of Application</h2>
+          <a href="/apply-now/1283420">Apply</a>
+        </div></body></html>
+        """
+        respx.get(detail_url).mock(return_value=httpx.Response(200, text=detail_html))
+        respx.get(apply_now_url).mock(
+            return_value=httpx.Response(
+                302,
+                headers={"Location": f"{BASE_URL}/job/another-role"},
+            )
+        )
+        adapter = MyJobMagAdapter(request_delay=0, jitter=0)
+        listing = RawListing(external_url=detail_url, title="Procurement Coordinator")
+
+        result = await adapter.fetch_detail(listing, _make_config())
+
+        assert result.application_url is None
+
+    @respx.mock
     async def test_skips_if_raw_html_present(self) -> None:
         adapter = MyJobMagAdapter(request_delay=0, jitter=0)
         listing = RawListing(

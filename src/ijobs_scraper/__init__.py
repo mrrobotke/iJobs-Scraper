@@ -2,6 +2,10 @@
 
 from ijobs_scraper._registry import AdapterRegistry
 from ijobs_scraper.adapters.base import APIAdapter, BaseAdapter, BrowserAdapter, HTMLAdapter
+from ijobs_scraper.application_destination import (
+    is_safe_application_destination,
+    resolve_application_destination,
+)
 from ijobs_scraper.engine import ScraperEngine
 from ijobs_scraper.exceptions import (
     AdapterError,
@@ -43,4 +47,6 @@ __all__ = [
     "SourceType",
     "StorageBackend",
     "get_due_sources",
+    "is_safe_application_destination",
+    "resolve_application_destination",
 ]
