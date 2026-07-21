@@ -100,6 +100,7 @@ class TestRawListing:
         assert listing.raw_json is None
         assert listing.raw_text is None
         assert listing.company_name is None
+        assert listing.application_url is None
         assert listing.fetched_at is not None
 
     def test_fetched_at_auto_set(self) -> None:
@@ -154,6 +155,17 @@ class TestJobRequirements:
 
 
 class TestEnrichedJob:
+    def test_application_destination_defaults_to_none(self) -> None:
+        job = EnrichedJob(
+            title="Software Engineer",
+            description="Great role",
+            company_name="Test Corp",
+            content_hash="abc123",
+            source_slug="test",
+        )
+
+        assert job.external_url is None
+
     def test_required_fields(self) -> None:
         job = EnrichedJob(
             title="Software Engineer",

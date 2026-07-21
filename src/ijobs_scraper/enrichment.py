@@ -13,6 +13,7 @@ from typing import Any
 from bs4 import BeautifulSoup, Tag
 from bs4.element import NavigableString
 
+from ijobs_scraper.application_destination import resolve_application_destination
 from ijobs_scraper.dedup import compute_content_hash
 from ijobs_scraper.exceptions import EnrichmentError
 from ijobs_scraper.models import EnrichedJob, JobRequirements, RawListing, SourceConfig
@@ -44,6 +45,12 @@ _BLOCK_TAGS = {
 def _html_to_structured_text(html: str) -> str:
     """Convert HTML to text preserving block-level structure, not inline breaks."""
     soup = BeautifulSoup(html, "lxml")
+    for anchor in soup.find_all("a", href=True):
+        href = str(anchor.get("href", "")).strip()
+        if href.lower().startswith(("http://", "https://", "mailto:")):
+            label = anchor.get_text(" ", strip=True)
+            if href not in label:
+                anchor.append(NavigableString(f" [{href}]"))
     parts: list[str] = []
     for node in soup.descendants:
         if isinstance(node, NavigableString):
@@ -142,7 +149,10 @@ FIELD-SPECIFIC RULES:
 
 9. NUMBER OF OPENINGS - Integer. Default 1 if not stated.
 
-10. APPLICATION INSTRUCTIONS - Exact how-to-apply text if present, else null.
+10. APPLICATION INSTRUCTIONS - Exact how-to-apply text if present, including any
+    employer email address or application link, else null. The Source URL is provenance
+    only and must never be treated as an application destination unless the listing text
+    explicitly identifies a different application action.
 
 11. EMPLOYMENT TYPE / REMOTE TYPE - Infer from context. Default: full_time / onsite.
 
@@ -366,7 +376,12 @@ async def enrich(
             benefits=extracted.get("benefits", []),
             category=extracted.get("category"),
             requirements=requirements,
-            external_url=raw.external_url,
+            external_url=resolve_application_destination(
+                application_instructions=extracted.get("application_instructions"),
+                source_url=raw.external_url,
+                job_title=extracted["title"],
+                candidate_url=raw.application_url,
+            ),
             posted_at=_parse_datetime(extracted.get("posted_at")),
             expires_at=_parse_datetime(extracted.get("expires_at")),
             content_hash=content_hash,

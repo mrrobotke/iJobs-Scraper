@@ -36,6 +36,7 @@ class RawListing(BaseModel):
 
     external_id: str | None = None
     external_url: str
+    application_url: str | None = None
     title: str | None = None
     raw_html: str | None = None
     raw_json: dict[str, Any] | None = None
@@ -74,7 +75,7 @@ class EnrichedJob(BaseModel):
     benefits: list[str] = Field(default_factory=list)
     category: str | None = None
     requirements: JobRequirements | None = None
-    external_url: str
+    external_url: str | None = None
     posted_at: datetime | None = None
     expires_at: datetime | None = None
     content_hash: str

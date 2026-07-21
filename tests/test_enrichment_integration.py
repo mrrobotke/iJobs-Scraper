@@ -170,7 +170,7 @@ class TestLiveEnrichmentPipeline:
         assert enriched.company_name, "company_name must not be empty"
         assert len(enriched.content_hash) == 64, "content_hash must be SHA-256 hex"
         assert enriched.source_slug == "careerjet-kenya"
-        assert enriched.external_url == raw.external_url
+        assert enriched.external_url != raw.external_url
 
         # Category must be one of the valid enum values
         assert enriched.category in VALID_CATEGORIES, (
@@ -234,7 +234,7 @@ class TestLiveEnrichmentPipeline:
         assert enriched.company_name, "company_name must not be empty"
         assert len(enriched.content_hash) == 64, "content_hash must be SHA-256 hex"
         assert enriched.source_slug == "test-corp"
-        assert enriched.external_url == "https://example.com/jobs/senior-python-dev"
+        assert enriched.external_url is None
 
         # Enum validations
         assert enriched.category in VALID_CATEGORIES

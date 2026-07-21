@@ -95,6 +95,20 @@ class TestCleanContent:
         assert any("SQL skills" in line for line in lines)
         assert any("Lead team" in line for line in lines)
 
+    def test_html_anchor_destinations_are_preserved(self) -> None:
+        listing = RawListing(
+            external_url="https://source.example/job/1",
+            raw_html=(
+                '<h3>Method of Application</h3><p>Apply <a href="https://careers.example/jobs/1">'
+                'here</a> or email <a href="mailto:jobs@example.com">HR</a>.</p>'
+            ),
+        )
+
+        content = clean_content(listing)
+
+        assert "https://careers.example/jobs/1" in content
+        assert "mailto:jobs@example.com" in content
+
     def test_json_with_embedded_html_normalized(self) -> None:
         listing = RawListing(
             external_url="https://example.com/job/1",
@@ -122,7 +136,7 @@ class TestEnrich:
         assert job.title == "Software Engineer"
         assert job.description == "A great role at a great company."
         assert job.company_name == "Test Corp"
-        assert job.external_url == "https://example.com/job/1"
+        assert job.external_url is None
         assert job.source_slug == "test"
         assert job.content_hash  # not empty
 
@@ -362,3 +376,39 @@ class TestEnrich:
         )
         job = await enrich(listing, _make_source(), ai)
         assert job.application_instructions == "Email CV to hr@corp.com"
+        assert job.external_url == "mailto:hr@corp.com?subject=Dev"
+
+    async def test_adapter_resolved_application_url_takes_precedence(self) -> None:
+        response = {
+            "title": "Procurement Coordinator",
+            "description": "Role",
+            "company_name": "SevenTwenty Holdings",
+            "company_website": None,
+            "location": "Nairobi, Kenya",
+            "remote_type": "onsite",
+            "employment_type": "full_time",
+            "experience_level": None,
+            "salary_min": None,
+            "salary_max": None,
+            "currency": "KES",
+            "skills": [],
+            "benefits": [],
+            "category": "supply-chain-logistics",
+            "requirements": None,
+            "posted_at": None,
+            "expires_at": None,
+            "number_of_openings": 1,
+            "application_instructions": "Go to seventwentyholdings.co.ke to apply",
+        }
+        ai = StubAIProvider(response=response)
+        listing = RawListing(
+            external_url="https://www.myjobmag.co.ke/job/procurement-coordinator",
+            application_url=("https://seventwentyholdings.co.ke/jobs/procurement-coordinator"),
+            raw_text="Procurement Coordinator role",
+        )
+
+        job = await enrich(listing, _make_source(), ai)
+
+        assert job.external_url == (
+            "https://seventwentyholdings.co.ke/jobs/procurement-coordinator"
+        )

@@ -214,7 +214,7 @@ class TestParseUrl:
 
         job = await engine.parse_url("https://example.com/job/1", hint="test_adapter")
         assert job.title == "Software Engineer"
-        assert job.external_url == "https://example.com/job/1"
+        assert job.external_url is None
 
     async def test_auto_detect(self) -> None:
         AdapterRegistry.register("test_adapter")(MockAdapter)
