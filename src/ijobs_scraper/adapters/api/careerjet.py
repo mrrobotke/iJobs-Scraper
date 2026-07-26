@@ -35,6 +35,7 @@ CAREERJET_API_URL = "https://search.api.careerjet.net/v4/query"
 DEFAULT_PAGESIZE = 20  # API ignores page_size param; always returns 20
 DEFAULT_LOCATION = "Kenya"
 DEFAULT_LOCALE = "en_GB"
+USER_AGENT = "ijobs-scraper/0.1.5"
 MAX_PAGES = 10  # Results repeat after page 10
 
 
@@ -70,13 +71,7 @@ class CareerjetAdapter(APIAdapter):
         location: str = config.config.get("location", DEFAULT_LOCATION)
         locale: str = config.config.get("locale", DEFAULT_LOCALE)
 
-        user_ip: str | None = config.config.get("user_ip")
-        if not user_ip:
-            raise AdapterError(
-                "careerjet",
-                "Careerjet adapter requires 'user_ip' in source config",
-                retryable=False,
-            )
+        user_ip = self._require_config(config, "user_ip")
 
         credentials = base64.b64encode(f"{api_key}:".encode()).decode()
         auth_headers: dict[str, str] = {
@@ -92,7 +87,7 @@ class CareerjetAdapter(APIAdapter):
                 "location": location,
                 "page": page,
                 "user_ip": user_ip,
-                "user_agent": "ijobs-scraper/0.1.0",
+                "user_agent": USER_AGENT,
                 "locale_code": locale,
             }
 
@@ -123,7 +118,7 @@ class CareerjetAdapter(APIAdapter):
                         external_url=external_url,
                         title=job.get("title"),
                         raw_json=job,
-                        company_name=config.name,
+                        company_name=job.get("company") or config.name,
                     )
                 except Exception:
                     logger.warning(

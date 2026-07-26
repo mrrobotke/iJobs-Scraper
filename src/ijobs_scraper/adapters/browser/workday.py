@@ -1,39 +1,18 @@
-"""Workday browser adapter (reusable for Absa, NCBA, etc.).
+"""Workday Candidate Experience (CXS) JSON adapter.
 
-Workday Candidate Experience Sites (CXS) are fully JavaScript-rendered
-and have no public API. This adapter uses Playwright to load the careers
-page, wait for job cards to render, and extract listing data from the DOM.
-
-Example (Absa Bank)::
-
-    source = SourceConfig(
-        name="Absa Bank",
-        slug="absa",
-        adapter="workday",
-        source_type=SourceType.BROWSER,
-        base_url="https://absa.wd3.myworkdayjobs.com",
-        config={"tenant": "absa", "instance": "AbsaCareers"},
-    )
-
-Example (NCBA Bank)::
-
-    source = SourceConfig(
-        name="NCBA Bank",
-        slug="ncba",
-        adapter="workday",
-        source_type=SourceType.BROWSER,
-        base_url="https://ncba.wd3.myworkdayjobs.com",
-        config={"tenant": "ncba", "instance": "NCBACareers"},
-    )
+The class remains in the historical ``adapters.browser`` module so existing
+imports continue to work, but it no longer requires Playwright. Workday career
+sites expose the same JSON endpoints used by their web application.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ijobs_scraper._registry import AdapterRegistry
-from ijobs_scraper.adapters.base import BrowserAdapter
+from ijobs_scraper.adapters.base import APIAdapter
+from ijobs_scraper.exceptions import AdapterError
 from ijobs_scraper.models import RawListing, SourceConfig
 
 if TYPE_CHECKING:
@@ -41,171 +20,168 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MAX_PAGES = 50
-_JOB_CARD_SELECTOR = 'a[data-automation-id="jobTitle"]'
-_NEXT_BUTTON_SELECTOR = 'button[data-uxi-element-id="next"]'
+DEFAULT_PAGE_SIZE = 20
+DEFAULT_MAX_PAGES = 50
+_HOST_SUFFIX = "myworkdayjobs.com"
 
 
 @AdapterRegistry.register("workday")
-class WorkdayAdapter(BrowserAdapter):
-    """Scrapes jobs from Workday-powered career sites.
-
-    Workday CXS pages are fully JavaScript-rendered single-page
-    applications. The adapter navigates to the careers page, waits
-    for job cards to appear, and paginates through results using
-    the "next" button.
-
-    This adapter is reusable for any Workday employer by providing
-    different ``tenant`` and ``instance`` values in the source config.
+class WorkdayAdapter(APIAdapter):
+    """Scrape any Workday career site through its CXS JSON endpoints.
 
     Required config keys:
-        - ``tenant``: The Workday tenant identifier (e.g. ``"absa"``).
-        - ``instance``: The career site instance name (e.g. ``"AbsaCareers"``).
+        tenant: Workday tenant identifier, for example ``"absa"``.
+        instance: Candidate site name, for example ``"ABSAcareersite"``.
+
+    Optional config keys:
+        applied_facets: Workday facet mapping, such as a Kenya
+            ``locationCountry`` identifier.
+        locale: Public career-page locale. Defaults to ``"en-US"``.
+        page_size: Number of jobs requested per page. Defaults to 20.
+        max_pages: Safety cap. Defaults to 50.
     """
 
-    _host_suffix = "myworkdayjobs.com"
-    _detail_selector = '[data-automation-id="jobPostingDescription"]'
-    _detail_min_length = 200
+    @staticmethod
+    def _validated_path(value: object) -> str | None:
+        if not isinstance(value, str):
+            return None
+        if not value.startswith("/job/") or ".." in value or any(c in value for c in ("?", "#")):
+            return None
+        return value
 
-    def _build_careers_url(self, config: SourceConfig) -> str:
-        """Build the Workday careers listing URL from config.
-
-        Args:
-            config: Source configuration with tenant and instance.
-
-        Returns:
-            The full URL to the Workday careers listing page.
-        """
-        base = config.base_url.rstrip("/")
+    def _api_root(self, config: SourceConfig) -> str:
+        tenant = self._require_config(config, "tenant")
         instance = self._require_config(config, "instance")
-        return f"{base}/en-US/{instance}/jobs"
+        return f"{config.base_url.rstrip('/')}/wday/cxs/{tenant}/{instance}"
+
+    @staticmethod
+    def _applied_facets(config: SourceConfig) -> dict[str, list[str]]:
+        configured = config.config.get("applied_facets", {})
+        if not isinstance(configured, dict):
+            raise AdapterError(
+                "workday",
+                "Workday 'applied_facets' must be an object",
+                retryable=False,
+            )
+
+        facets: dict[str, list[str]] = {}
+        for key, value in configured.items():
+            if not isinstance(key, str) or not isinstance(value, list):
+                raise AdapterError(
+                    "workday",
+                    "Workday facet values must be arrays of strings",
+                    retryable=False,
+                )
+            if not all(isinstance(item, str) for item in value):
+                raise AdapterError(
+                    "workday",
+                    "Workday facet values must be arrays of strings",
+                    retryable=False,
+                )
+            facets[key] = value
+        return facets
 
     async def fetch_listings(self, config: SourceConfig) -> AsyncIterator[RawListing]:
-        """Fetch job listings from a Workday careers site.
+        """Yield all postings from the configured Workday candidate site."""
+        instance = self._require_config(config, "instance")
+        api_url = f"{self._api_root(config)}/jobs"
+        locale = str(config.config.get("locale", "en-US"))
+        page_size = max(1, min(int(config.config.get("page_size", DEFAULT_PAGE_SIZE)), 100))
+        max_pages = max(1, int(config.config.get("max_pages", DEFAULT_MAX_PAGES)))
+        applied_facets = self._applied_facets(config)
+        offset = 0
+        page = 0
 
-        Navigates to the careers page, waits for JavaScript to render
-        job cards, extracts listing data, and paginates through results.
+        while page < max_pages:
+            data = await self._post(
+                api_url,
+                json={
+                    "appliedFacets": applied_facets,
+                    "limit": page_size,
+                    "offset": offset,
+                    "searchText": str(config.config.get("search_text", "")),
+                },
+            )
+            postings = data.get("jobPostings", [])
+            if not isinstance(postings, list) or not postings:
+                break
 
-        Args:
-            config: Source configuration with ``base_url``, ``tenant``,
-                and ``instance`` in the config dict.
+            for posting in postings:
+                if not isinstance(posting, dict):
+                    continue
+                external_path = self._validated_path(posting.get("externalPath"))
+                if external_path is None:
+                    logger.debug("Skipping Workday posting without a valid externalPath")
+                    continue
 
-        Yields:
-            A ``RawListing`` for each job card found.
-        """
-        from html import escape as html_escape
+                bullet_fields = posting.get("bulletFields")
+                external_id = None
+                if isinstance(bullet_fields, list) and bullet_fields and bullet_fields[0]:
+                    external_id = str(bullet_fields[0])
 
-        url = self._build_careers_url(config)
-        max_pages = int(config.config.get("max_pages", _DEFAULT_MAX_PAGES))
-        seen_urls: set[str] = set()
+                yield RawListing(
+                    external_id=external_id,
+                    external_url=(
+                        f"{config.base_url.rstrip('/')}/{locale}/{instance}{external_path}"
+                    ),
+                    title=str(posting["title"]) if posting.get("title") else None,
+                    raw_json=posting,
+                    company_name=config.name,
+                )
 
-        try:
-            page: Any = await self._launch_browser()
-            await self._navigate(page, url)
+            offset += len(postings)
+            page += 1
+            total = data.get("total")
+            if isinstance(total, int) and offset >= total:
+                break
+            if len(postings) < page_size:
+                break
 
-            for page_num in range(1, max_pages + 1):
-                # Wait for job cards to render
-                try:
-                    await page.wait_for_selector(
-                        _JOB_CARD_SELECTOR,
-                        timeout=self._page_timeout * 1000,
-                    )
-                except Exception as exc:
-                    if page_num == 1:
-                        logger.warning(
-                            "No job cards found on first page for %s: %s",
-                            config.slug,
-                            exc,
-                        )
-                    else:
-                        logger.debug(
-                            "No more job cards on page %d for %s: %s",
-                            page_num,
-                            config.slug,
-                            exc,
-                        )
-                    break
+        if (
+            page >= max_pages
+            and len(postings) >= page_size
+            and not (isinstance(total, int) and offset >= total)
+        ):
+            logger.warning(
+                "Reached MAX_PAGES (%d) for source %s — results may be truncated",
+                max_pages,
+                config.slug,
+            )
 
-                cards = await page.query_selector_all(_JOB_CARD_SELECTOR)
-                if not cards:
-                    break
+    async def fetch_detail(self, listing: RawListing, config: SourceConfig) -> RawListing:
+        """Fetch the full job posting through the CXS detail endpoint."""
+        if listing.raw_json and listing.raw_json.get("jobDescription"):
+            return listing
+        if not self._validate_url(listing.external_url, _HOST_SUFFIX):
+            logger.warning(
+                "Rejecting Workday detail URL outside expected host: %s",
+                listing.external_url,
+            )
+            return listing
 
-                for card in cards:
-                    try:
-                        title = await card.text_content()
-                        href = await card.get_attribute("href")
+        external_path = None
+        if listing.raw_json:
+            external_path = self._validated_path(listing.raw_json.get("externalPath"))
+        if external_path is None:
+            return listing
 
-                        if not title or not href:
-                            continue
+        data = await self._get(f"{self._api_root(config)}{external_path}")
+        posting_info = data.get("jobPostingInfo")
+        if not isinstance(posting_info, dict):
+            logger.warning(
+                "Workday detail response missing jobPostingInfo for %s",
+                listing.external_url,
+            )
+            return listing
 
-                        title = title.strip()
-                        base = config.base_url.rstrip("/")
-                        external_url = f"{base}{href}" if href.startswith("/") else href
+        return listing.model_copy(
+            update={
+                "title": posting_info.get("title") or listing.title,
+                "raw_html": posting_info.get("jobDescription"),
+                "raw_json": posting_info,
+            }
+        )
 
-                        external_url = self._validate_url(external_url, self._host_suffix) or ""
-                        if not external_url:
-                            logger.debug(
-                                "Skipping Workday listing with invalid URL: %s",
-                                href,
-                            )
-                            continue
-
-                        if external_url in seen_urls:
-                            continue
-                        seen_urls.add(external_url)
-
-                        # Try to extract location from sibling elements
-                        location = None
-                        parent = await card.evaluate_handle(
-                            "el => el.closest('li') || el.parentElement"
-                        )
-                        if parent:
-                            loc_el = await parent.query_selector(
-                                '[data-automation-id="jobLocation"],[data-automation-id="subtitle"]'
-                            )
-                            if loc_el:
-                                location = await loc_el.text_content()
-
-                        raw_html_parts = [f"<h1>{html_escape(title)}</h1>"]
-                        if location:
-                            raw_html_parts.append(f"<p>{html_escape(location.strip())}</p>")
-
-                        yield RawListing(
-                            external_url=external_url,
-                            title=title,
-                            raw_html="\n".join(raw_html_parts),
-                            company_name=config.name,
-                        )
-                    except Exception:
-                        logger.warning(
-                            "Skipping malformed Workday listing on page %d",
-                            page_num,
-                            exc_info=True,
-                        )
-                        continue
-
-                # Try to navigate to next page
-                next_btn = await page.query_selector(_NEXT_BUTTON_SELECTOR)
-                if next_btn is None:
-                    break
-                is_disabled = await next_btn.get_attribute("disabled")
-                if is_disabled is not None:
-                    break
-
-                await next_btn.click()
-                # Wait for new results to load after clicking next
-                try:
-                    await page.wait_for_selector(
-                        _JOB_CARD_SELECTOR,
-                        timeout=self._page_timeout * 1000,
-                    )
-                except Exception as exc:
-                    logger.debug(
-                        "Pagination ended on page %d for %s: %s",
-                        page_num,
-                        config.slug,
-                        exc,
-                    )
-                    break
-        finally:
-            await self._close_browser()
+    def can_handle_url(self, url: str) -> bool:
+        """Return whether *url* belongs to a Workday candidate site."""
+        return self._validate_url(url, _HOST_SUFFIX) is not None

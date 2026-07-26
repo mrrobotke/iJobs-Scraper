@@ -72,6 +72,21 @@ class TestCleanContent:
         content = clean_content(listing)
         assert len(content) == MAX_CONTENT_LENGTH
 
+    async def test_source_can_set_a_smaller_enrichment_content_limit(self) -> None:
+        ai = StubAIProvider()
+        listing = RawListing(
+            external_url="https://example.com/job/1",
+            raw_text="x" * 10_000,
+        )
+        source = _make_source()
+        source = source.model_copy(update={"config": {"max_content_length": 1_200}})
+
+        await enrich(listing, source, ai)
+
+        assert len(ai.calls) == 1
+        prompt = ai.calls[0]["user"]
+        assert len(prompt.rsplit("Content:\n", maxsplit=1)[1]) == 1_200
+
     def test_html_tag_stripping(self) -> None:
         listing = RawListing(
             external_url="https://example.com/job/1",

@@ -5,6 +5,7 @@ from ijobs_scraper.adapters.html.fuzu import FuzuAdapter
 from ijobs_scraper.adapters.html.kcb import KCBAdapter
 from ijobs_scraper.adapters.html.mygov import MyGovAdapter
 from ijobs_scraper.adapters.html.myjobmag import MyJobMagAdapter
+from ijobs_scraper.adapters.html.ncba import NCBAAdapter
 
 __all__ = [
     "BrighterMondayAdapter",
@@ -12,4 +13,5 @@ __all__ = [
     "KCBAdapter",
     "MyGovAdapter",
     "MyJobMagAdapter",
+    "NCBAAdapter",
 ]

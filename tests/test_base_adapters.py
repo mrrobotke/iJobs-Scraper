@@ -8,7 +8,7 @@ import httpx
 import pytest
 import respx
 
-from ijobs_scraper.adapters.base import BaseAdapter, BrowserAdapter, HTMLAdapter
+from ijobs_scraper.adapters.base import APIAdapter, BaseAdapter, BrowserAdapter, HTMLAdapter
 from ijobs_scraper.exceptions import AdapterError
 from ijobs_scraper.models import RawListing, SourceConfig
 
@@ -18,6 +18,13 @@ if TYPE_CHECKING:
 
 class _ConcreteHTMLAdapter(HTMLAdapter):
     """Minimal concrete adapter for testing base class methods."""
+
+    async def fetch_listings(self, config: SourceConfig) -> AsyncIterator[RawListing]:
+        yield RawListing(external_url="https://example.com/job/1")  # pragma: no cover
+
+
+class _ConcreteAPIAdapter(APIAdapter):
+    """Minimal concrete API adapter for testing HTTP behavior."""
 
     async def fetch_listings(self, config: SourceConfig) -> AsyncIterator[RawListing]:
         yield RawListing(external_url="https://example.com/job/1")  # pragma: no cover
@@ -138,6 +145,77 @@ class TestMaxResponseSize:
         adapter = _ConcreteHTMLAdapter(request_delay=0, jitter=0)
         soup = await adapter._fetch_page(url)
         assert soup is not None
+
+
+class TestTransientRetries:
+    """Adapters retry only bounded transient responses and honor Retry-After."""
+
+    @respx.mock
+    async def test_api_retries_429_and_honors_retry_after(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        url = "https://example.com/jobs"
+        route = respx.get(url).mock(
+            side_effect=[
+                httpx.Response(429, headers={"Retry-After": "2"}),
+                httpx.Response(200, json={"jobs": []}),
+            ]
+        )
+        sleeps: list[float] = []
+
+        async def record_sleep(delay: float) -> None:
+            sleeps.append(delay)
+
+        monkeypatch.setattr("ijobs_scraper.adapters.base.asyncio.sleep", record_sleep)
+        adapter = _ConcreteAPIAdapter(request_delay=0, max_attempts=3, retry_base_delay=0.1)
+
+        assert await adapter._get(url) == {"jobs": []}
+        assert route.call_count == 2
+        assert sleeps == [2.0]
+
+    @respx.mock
+    async def test_html_retries_503_with_bounded_backoff(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        url = "https://example.com/jobs"
+        route = respx.get(url).mock(
+            side_effect=[
+                httpx.Response(503, text="busy"),
+                httpx.Response(200, text="<html><body>OK</body></html>"),
+            ]
+        )
+        sleeps: list[float] = []
+
+        async def record_sleep(delay: float) -> None:
+            sleeps.append(delay)
+
+        monkeypatch.setattr("ijobs_scraper.adapters.base.asyncio.sleep", record_sleep)
+        adapter = _ConcreteHTMLAdapter(
+            request_delay=0,
+            jitter=0,
+            max_attempts=2,
+            retry_base_delay=0.25,
+            retry_jitter=0,
+        )
+
+        soup = await adapter._fetch_page(url)
+        assert soup.body is not None
+        assert soup.body.get_text(strip=True) == "OK"
+        assert route.call_count == 2
+        assert sleeps == [0.25]
+
+    @respx.mock
+    async def test_api_does_not_retry_non_transient_client_error(self) -> None:
+        url = "https://example.com/jobs"
+        route = respx.get(url).mock(
+            return_value=httpx.Response(401, json={"error": "unauthorized"})
+        )
+        adapter = _ConcreteAPIAdapter(request_delay=0, max_attempts=3)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await adapter._get(url)
+
+        assert route.call_count == 1
 
 
 class TestRequireConfig:
