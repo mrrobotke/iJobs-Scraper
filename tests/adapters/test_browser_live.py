@@ -1,11 +1,7 @@
-"""Live integration tests for browser adapters.
+"""Live integration tests for adapters with historically browser-backed imports.
 
-These tests hit real websites using Playwright and are NOT run in CI.
+These tests hit real websites and are NOT run in CI.
 Run manually with: pytest tests/adapters/test_browser_live.py -v -m live
-
-Requires playwright to be installed:
-    pip install ijobs-scraper[browser]
-    playwright install chromium
 """
 
 from __future__ import annotations
@@ -22,18 +18,19 @@ from ijobs_scraper.models import SourceConfig, SourceType
 pytestmark = pytest.mark.live
 
 
-def _browser_config(
+def _config(
     name: str,
     slug: str,
     adapter: str,
     base_url: str,
+    source_type: SourceType,
     config: dict[str, Any] | None = None,
 ) -> SourceConfig:
     return SourceConfig(
         name=name,
         slug=slug,
         adapter=adapter,
-        source_type=SourceType.BROWSER,
+        source_type=source_type,
         base_url=base_url,
         config=config or {},
     )
@@ -41,64 +38,51 @@ def _browser_config(
 
 class TestWorkdayAbsaLive:
     async def test_fetch_listings_returns_jobs(self) -> None:
-        adapter = WorkdayAdapter(page_timeout=60.0, nav_delay=5.0)
-        config = _browser_config(
+        adapter = WorkdayAdapter(request_delay=0)
+        config = _config(
             "Absa Bank",
             "absa",
             "workday",
             "https://absa.wd3.myworkdayjobs.com",
-            {"tenant": "absa", "instance": "AbsaCareers"},
+            SourceType.API,
+            {
+                "tenant": "absa",
+                "instance": "ABSAcareersite",
+                "applied_facets": {"locationCountry": ["9e684fd7be1e469d9ee955a4c3b754be"]},
+            },
         )
         listings = []
         async for listing in adapter.fetch_listings(config):
             listings.append(listing)
             if len(listings) >= 3:
                 break
+        await adapter.close()
 
-        # Workday may have variable openings — verify no crash
+        assert len(listings) >= 1
         for listing in listings:
             assert listing.external_url.startswith("http")
             assert listing.title
             assert listing.company_name == "Absa Bank"
 
 
-class TestWorkdayNCBALive:
-    async def test_fetch_listings_returns_jobs(self) -> None:
-        adapter = WorkdayAdapter(page_timeout=60.0, nav_delay=5.0)
-        config = _browser_config(
-            "NCBA Bank",
-            "ncba",
-            "workday",
-            "https://ncba.wd3.myworkdayjobs.com",
-            {"tenant": "ncba", "instance": "NCBACareers"},
-        )
-        listings = []
-        async for listing in adapter.fetch_listings(config):
-            listings.append(listing)
-            if len(listings) >= 3:
-                break
-
-        for listing in listings:
-            assert listing.external_url.startswith("http")
-            assert listing.title
-            assert listing.company_name == "NCBA Bank"
-
-
 class TestImpactpoolLive:
     async def test_fetch_listings_returns_jobs(self) -> None:
-        adapter = ImpactpoolAdapter(page_timeout=60.0, nav_delay=5.0)
-        config = _browser_config(
+        adapter = ImpactpoolAdapter(request_delay=0, jitter=0)
+        config = _config(
             "Impactpool",
             "impactpool",
             "impactpool",
             "https://www.impactpool.org",
+            SourceType.HTML,
         )
         listings = []
         async for listing in adapter.fetch_listings(config):
             listings.append(listing)
             if len(listings) >= 3:
                 break
+        await adapter.close()
 
+        assert len(listings) >= 1
         for listing in listings:
             assert listing.external_url.startswith("http")
             assert listing.title
@@ -107,11 +91,12 @@ class TestImpactpoolLive:
 class TestWorldVisionLive:
     async def test_fetch_listings_returns_jobs(self) -> None:
         adapter = WorldVisionAdapter(page_timeout=60.0, nav_delay=5.0)
-        config = _browser_config(
+        config = _config(
             "World Vision",
             "world-vision",
             "world_vision",
             "https://careers.wvi.org",
+            SourceType.BROWSER,
         )
         listings = []
         async for listing in adapter.fetch_listings(config):

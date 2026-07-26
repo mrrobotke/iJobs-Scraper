@@ -19,7 +19,9 @@ from ijobs_scraper.exceptions import EnrichmentError
 from ijobs_scraper.models import EnrichedJob, JobRequirements, RawListing, SourceConfig
 from ijobs_scraper.protocols import AIProvider
 
-MAX_CONTENT_LENGTH = 40_000
+# Keep enrichment requests comfortably below provider context and request-size
+# limits while preserving enough source material for a useful structured result.
+MAX_CONTENT_LENGTH = 16_000
 
 _BLOCK_TAGS = {
     "p",
@@ -277,10 +279,10 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
 }
 
 
-def clean_content(raw: RawListing) -> str:
+def clean_content(raw: RawListing, max_length: int = MAX_CONTENT_LENGTH) -> str:
     """Extract text content from a raw listing, applying block-aware HTML normalisation.
 
-    Priority: raw_json > raw_html > raw_text. Truncates to 40,000 chars.
+    Priority: raw_json > raw_html > raw_text. Truncates to ``max_length`` chars.
     For raw_json, recurses into the structure and normalises only string
     values that look like HTML, so non-HTML strings containing ``<`` or ``>``
     (salary ranges, emails, etc.) are preserved verbatim.
@@ -295,7 +297,7 @@ def clean_content(raw: RawListing) -> str:
     else:
         text = raw.title or ""
 
-    return text[:MAX_CONTENT_LENGTH]
+    return text[:max_length]
 
 
 def _parse_datetime(value: str | None) -> datetime | None:
@@ -326,7 +328,13 @@ async def enrich(
     Raises:
         EnrichmentError: If AI extraction or validation fails.
     """
-    content = clean_content(raw)
+    configured_limit = source.config.get("max_content_length", MAX_CONTENT_LENGTH)
+    try:
+        max_content_length = int(configured_limit)
+    except (TypeError, ValueError):
+        max_content_length = MAX_CONTENT_LENGTH
+    max_content_length = max(1_000, min(max_content_length, 40_000))
+    content = clean_content(raw, max_content_length)
     if not content:
         raise EnrichmentError("No content available for enrichment")
 

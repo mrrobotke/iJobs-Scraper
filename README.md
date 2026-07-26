@@ -86,12 +86,13 @@ asyncio.run(main())
 | MyGov Kenya | `mygov` | HTML | No | Stable |
 | Fuzu Kenya | `fuzu` | HTML | No | Stable |
 | KCB Bank | `kcb` | HTML | No | Stable |
-| Absa Bank | `workday` | Browser | Yes | Stable |
-| NCBA Bank | `workday` | Browser | Yes | Stable |
-| Impactpool | `impactpool` | Browser | No | Stable |
+| Absa Bank | `workday` | API | Yes | Stable |
+| NCBA Bank | `ncba` | HTML | No | Stable |
+| Impactpool | `impactpool` | HTML | No | Stable |
 | World Vision | `world_vision` | Browser | No | Stable |
 
-> **14 sources, 13 adapters** — Absa and NCBA share the reusable `workday` adapter with different config.
+> **14 sources, 14 adapters** — platform adapters such as Workday remain reusable
+> across employers by changing their source configuration.
 
 **Reusable** adapters work with any employer on the same platform. For example, the `greenhouse` adapter works for any company using Greenhouse by changing the `board_token` config.
 
@@ -251,17 +252,27 @@ SourceConfig(
     ...
 )
 
-# Workday — any employer using Workday (Absa, NCBA, etc.)
+# Workday — any employer exposing Workday Candidate Experience endpoints
 SourceConfig(
     adapter="workday",
-    config={"tenant": "absa", "instance": "AbsaCareers"},
+    config={
+        "tenant": "absa",
+        "instance": "ABSAcareersite",
+        "applied_facets": {
+            "locationCountry": ["9e684fd7be1e469d9ee955a4c3b754be"],
+        },
+    },
     ...
 )
 
 # Careerjet — meta-aggregator covering 60+ sites (v4 API, requires API key)
 SourceConfig(
     adapter="careerjet",
-    config={"api_key": os.environ["CAREERJET_API_KEY"], "location": "Kenya"},
+    config={
+        "api_key": os.environ["CAREERJET_API_KEY"],
+        "location": "Kenya",
+        "user_ip": os.environ["SCRAPER_USER_IP"],
+    },
     ...
 )
 ```
@@ -273,6 +284,7 @@ Some adapters require API keys. Add these to your `.env.local` or `.env` file:
 ```bash
 # Careerjet v4 API — register at https://www.careerjet.co.ke/partners/register/as-publisher
 CAREERJET_API_KEY=your_publisher_api_key_here
+SCRAPER_USER_IP=your_integration_ip_here
 ```
 
 The Careerjet adapter reads `api_key` from `SourceConfig.config`. In your integration, load it from the environment:
@@ -286,7 +298,11 @@ SourceConfig(
     adapter="careerjet",
     source_type=SourceType.API,
     base_url="https://www.careerjet.co.ke",
-    config={"api_key": os.environ["CAREERJET_API_KEY"], "location": "Kenya"},
+    config={
+        "api_key": os.environ["CAREERJET_API_KEY"],
+        "location": "Kenya",
+        "user_ip": os.environ["SCRAPER_USER_IP"],
+    },
 )
 ```
 

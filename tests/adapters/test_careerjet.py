@@ -103,7 +103,7 @@ class TestFetchListings:
         assert first.external_id is None
         assert first.external_url == "https://www.careerjet.co.ke/job/123"
         assert first.title == "Software Engineer"
-        assert first.company_name == "Careerjet Kenya"
+        assert first.company_name == "Tech Corp"
         assert first.raw_json is not None
         assert first.raw_json["company"] == "Tech Corp"
 
@@ -196,7 +196,7 @@ class TestFetchListings:
         request = route.calls[0].request
         assert request.url.params["location"] == "Kenya"
         assert request.url.params["locale_code"] == "en_GB"
-        assert request.url.params["user_agent"] == "ijobs-scraper/0.1.0"
+        assert request.url.params["user_agent"] == "ijobs-scraper/0.1.5"
         # api_key should NOT be in query params — it's in the Authorization header
         assert "api_key" not in request.url.params
         assert "affid" not in request.url.params
@@ -239,7 +239,6 @@ class TestFetchListings:
         assert request.url.params["user_ip"] == "192.168.1.1"
 
     async def test_raises_on_missing_user_ip(self) -> None:
-        """Missing user_ip in config should raise AdapterError."""
         config = _make_config(config={"api_key": "test_api_key_123", "location": "Kenya"})
         adapter = CareerjetAdapter(request_delay=0)
         with pytest.raises(AdapterError) as exc_info:
@@ -302,7 +301,7 @@ class TestFetchListings:
         from ijobs_scraper.exceptions import RateLimitError
 
         respx.get(CAREERJET_API_URL).mock(return_value=Response(429, headers={"Retry-After": "60"}))
-        adapter = CareerjetAdapter(request_delay=0)
+        adapter = CareerjetAdapter(request_delay=0, max_attempts=1)
         with pytest.raises(RateLimitError):
             async for _ in adapter.fetch_listings(_make_config()):
                 pass
@@ -385,16 +384,25 @@ class TestLiveCareerjetIntegration:
         if not api_key:
             pytest.skip("CAREERJET_API_KEY not set (env var or .env.local)")
 
+        user_ip = _load_env_key("SCRAPER_USER_IP")
+        if not user_ip:
+            pytest.skip("SCRAPER_USER_IP not set (env var or .env.local)")
+
         config = SourceConfig(
             name="Careerjet Kenya",
             slug="careerjet-kenya",
             adapter="careerjet",
             source_type=SourceType.API,
             base_url="https://www.careerjet.co.ke",
-            config={"api_key": api_key, "location": "Kenya", "user_ip": "127.0.0.1"},
+            config={"api_key": api_key, "location": "Kenya", "user_ip": user_ip},
         )
-        adapter = CareerjetAdapter()
-        listings = [listing async for listing in adapter.fetch_listings(config)]
+        adapter = CareerjetAdapter(request_delay=0)
+        listings = []
+        async for listing in adapter.fetch_listings(config):
+            listings.append(listing)
+            if len(listings) >= 3:
+                break
+        await adapter.close()
         assert len(listings) >= 1
         for listing in listings:
             assert listing.external_url

@@ -1,24 +1,15 @@
-"""MyGov Kenya government job adverts adapter.
+"""Kenya Government Advertising Agency job-adverts adapter.
 
-MyGov is the Kenyan government portal listing public sector vacancies
-in an HTML table at ``/job-adverts``. Pagination is URL-based.
-
-Example::
-
-    source = SourceConfig(
-        name="MyGov Kenya",
-        slug="mygov",
-        adapter="mygov",
-        source_type=SourceType.HTML,
-        base_url="https://www.mygov.go.ke",
-    )
+The former MyGov site now redirects to the Government Advertising Agency
+(GAA). The adapter name remains ``mygov`` for source compatibility.
 """
 
 from __future__ import annotations
 
 import logging
+from io import BytesIO
 from typing import TYPE_CHECKING
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 from ijobs_scraper._registry import AdapterRegistry
 from ijobs_scraper.adapters.base import HTMLAdapter
@@ -29,123 +20,100 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_PAGES = 200
-_HOST = "mygov.go.ke"
+GAA_BASE_URL = "https://gaa.go.ke"
+GAA_JOB_ADVERTS_PATH = "/index.php/node/445"
+_GOVERNMENT_HOSTS = ("gaa.go.ke", "mygov.go.ke")
 
 
 @AdapterRegistry.register("mygov")
 class MyGovAdapter(HTMLAdapter):
-    """Scrapes government job adverts from MyGov Kenya.
+    """Scrape current public-sector advert PDFs from the official GAA table."""
 
-    MyGov lists vacancies in an HTML table at ``/job-adverts``. Each row
-    contains a title link, the hiring organization, and a deadline date.
-    Pagination is via ``?page=N`` query parameters.
-    """
+    @staticmethod
+    def _listing_base(config: SourceConfig) -> str:
+        host = (urlparse(config.base_url).hostname or "").lower()
+        if host == "mygov.go.ke" or host.endswith(".mygov.go.ke"):
+            return GAA_BASE_URL
+        return config.base_url.rstrip("/")
 
     async def fetch_listings(self, config: SourceConfig) -> AsyncIterator[RawListing]:
-        """Fetch job adverts from the MyGov Kenya portal.
+        """Yield each government advert row with its official PDF URL."""
+        base = self._listing_base(config)
+        url = f"{base}{GAA_JOB_ADVERTS_PATH}"
+        soup = await self._fetch_page(url)
+        table = soup.select_one("table#datatable")
+        if table is None:
+            return
 
-        Paginates through ``?page=N`` URL parameters, extracting rows
-        from the job adverts table.
+        for row in table.select("tbody tr"):
+            cells = row.find_all("td")
+            if len(cells) < 3:
+                continue
+            link = cells[1].find("a", href=True)
+            if link is None:
+                continue
+            href = link.get("href")
+            if not isinstance(href, str):
+                continue
+            external_url = urljoin(base + "/", href)
+            if not self._validate_url(external_url, "gaa.go.ke"):
+                continue
 
-        Args:
-            config: Source configuration with ``base_url`` pointing to
-                the MyGov domain.
+            title = cells[0].get_text(" ", strip=True)
+            company_name = cells[2].get_text(" ", strip=True) or config.name
+            submission_date = cells[3].get_text(" ", strip=True) if len(cells) > 3 else ""
+            if not title:
+                continue
+            raw_text = "\n".join(
+                part
+                for part in (
+                    title,
+                    f"Recruiting agency: {company_name}",
+                    f"Submission date: {submission_date}" if submission_date else "",
+                )
+                if part
+            )
 
-        Yields:
-            A ``RawListing`` for each table row found.
-        """
-        base = config.base_url.rstrip("/")
-        url = f"{base}/job-adverts"
-        max_pages = int(config.config.get("max_pages", DEFAULT_MAX_PAGES))
-        page = 1
+            yield RawListing(
+                external_id=urlparse(external_url).path.rsplit("/", maxsplit=1)[-1],
+                external_url=external_url,
+                title=title,
+                raw_text=raw_text,
+                company_name=company_name,
+            )
 
-        while page <= max_pages:
-            params = {"page": str(page)} if page > 1 else None
-            soup = await self._fetch_page(url, params=params)
+    async def _extract_pdf_text(self, url: str) -> str:
+        """Download a bounded official PDF and extract its page text."""
+        try:
+            import pdfplumber
+        except ImportError:
+            logger.warning(
+                "pdfplumber is unavailable; install ijobs-scraper[pdf] for MyGov details"
+            )
+            return ""
 
-            table = soup.select_one(".job-adverts-table")
-            if table is None:
-                break
-
-            rows = table.select("tbody tr")
-            if not rows:
-                break
-
-            for row in rows:
-                try:
-                    cells = row.find_all("td")
-                    if len(cells) < 2:
-                        logger.debug("Skipping row with fewer than 2 cells on page %d", page)
-                        continue
-
-                    link = cells[0].find("a")
-                    if link is None:
-                        logger.debug("Skipping row with no link on page %d", page)
-                        continue
-
-                    title = link.get_text(strip=True)
-                    href = link.get("href", "")
-                    external_url = urljoin(base, str(href)) if href else ""
-                    external_url = self._validate_url(external_url, _HOST) or ""
-
-                    if not external_url:
-                        logger.debug("Skipping row with no URL on page %d", page)
-                        continue
-
-                    organization = cells[1].get_text(strip=True) if len(cells) > 1 else config.name
-
-                    yield RawListing(
-                        external_url=external_url,
-                        title=title,
-                        company_name=organization,
-                    )
-                except Exception:
-                    logger.warning(
-                        "Skipping malformed MyGov listing on page %d",
-                        page,
-                        exc_info=True,
-                    )
-                    continue
-
-            # Check for next page
-            next_link = soup.select_one(".pagination .next")
-            if next_link is None:
-                break
-
-            page += 1
+        body, _ = await self._fetch_bytes(url, detail=True)
+        with pdfplumber.open(BytesIO(body)) as document:
+            pages = (page.extract_text() or "" for page in document.pages)
+            return "\n\n".join(text for text in pages if text.strip())
 
     async def fetch_detail(self, listing: RawListing, config: SourceConfig) -> RawListing:
-        """Fetch the full job advert detail page and populate ``raw_html``.
-
-        Args:
-            listing: The listing to enrich with full HTML content.
-            config: Source configuration.
-
-        Returns:
-            The listing with ``raw_html`` populated from the detail page.
-        """
-        if listing.raw_html:
-            logger.debug("Detail already present for %s", listing.external_url)
+        """Append extracted official PDF text to the advert row metadata."""
+        if not self._validate_url(listing.external_url, "gaa.go.ke"):
+            logger.warning(
+                "Rejecting government advert URL outside GAA: %s",
+                listing.external_url,
+            )
+            return listing
+        if not urlparse(listing.external_url).path.lower().endswith(".pdf"):
             return listing
 
-        if not self._validate_url(listing.external_url, _HOST):
-            logger.warning("Rejecting detail URL outside expected host: %s", listing.external_url)
+        pdf_text = await self._extract_pdf_text(listing.external_url)
+        if not pdf_text:
             return listing
-
-        soup = await self._fetch_page(listing.external_url, detail=True)
-        detail = soup.select_one(".job-advert-detail")
-        html = str(detail) if detail else str(soup.body or soup)
-
-        return listing.model_copy(update={"raw_html": html})
+        combined = "\n\n".join(part for part in (listing.raw_text, pdf_text) if part)
+        return listing.model_copy(update={"raw_text": combined})
 
     def can_handle_url(self, url: str) -> bool:
-        """Check if this URL belongs to the MyGov Kenya portal.
-
-        Args:
-            url: The URL to check.
-
-        Returns:
-            True if the URL contains the MyGov domain.
-        """
-        return self._validate_url(url, _HOST) is not None
+        """Return whether *url* belongs to the legacy MyGov or current GAA host."""
+        return any(self._validate_url(url, host) is not None for host in _GOVERNMENT_HOSTS)

@@ -13,7 +13,9 @@ import os
 
 import pytest
 
+from ijobs_scraper.adapters.api.kenya_airways import KenyaAirwaysAdapter
 from ijobs_scraper.adapters.api.reliefweb import ReliefWebAdapter
+from ijobs_scraper.adapters.api.smartrecruiters import SmartRecruitersAdapter
 from ijobs_scraper.models import SourceConfig, SourceType
 
 pytestmark = pytest.mark.live
@@ -93,3 +95,49 @@ class TestReliefWebLive:
         assert detail.external_url == first.external_url
         assert detail.raw_html
         assert detail.title
+
+
+class TestAmrefLive:
+    async def test_fetch_listings_returns_jobs(self) -> None:
+        adapter = SmartRecruitersAdapter(request_delay=0)
+        config = _config(
+            "Amref Health Africa",
+            "amref",
+            "smartrecruiters",
+            "https://api.smartrecruiters.com",
+            config={"company_slug": "AmrefHealthAfrica4"},
+        )
+        listings = []
+        async for listing in adapter.fetch_listings(config):
+            listings.append(listing)
+            if len(listings) >= 3:
+                break
+        await adapter.close()
+
+        assert len(listings) >= 1
+        for listing in listings:
+            assert listing.external_url.startswith("https://jobs.smartrecruiters.com/")
+            assert listing.title
+            assert listing.company_name == "Amref Health Africa"
+
+
+class TestKenyaAirwaysLive:
+    async def test_fetch_listings_no_crash_when_no_openings(self) -> None:
+        adapter = KenyaAirwaysAdapter(request_delay=0)
+        config = _config(
+            "Kenya Airways",
+            "kenya-airways",
+            "kenya_airways",
+            "https://api-irec-prod.kenya-airways.com",
+        )
+        listings = []
+        async for listing in adapter.fetch_listings(config):
+            listings.append(listing)
+            if len(listings) >= 3:
+                break
+        await adapter.close()
+
+        for listing in listings:
+            assert listing.external_url.startswith("http")
+            assert listing.title
+            assert listing.company_name == "Kenya Airways"

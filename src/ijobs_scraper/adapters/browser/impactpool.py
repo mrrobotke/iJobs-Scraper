@@ -1,29 +1,17 @@
-"""Impactpool Kenya browser adapter.
+"""Impactpool server-rendered HTML adapter.
 
-Impactpool is a Rails application using Stimulus controllers for
-interactivity. The job listing pages use JavaScript-enhanced content
-that requires browser rendering. The adapter navigates to the Kenya
-jobs page and extracts listings from the rendered DOM.
-
-Example::
-
-    source = SourceConfig(
-        name="Impactpool",
-        slug="impactpool",
-        adapter="impactpool",
-        source_type=SourceType.BROWSER,
-        base_url="https://www.impactpool.org",
-    )
+The module path remains stable for existing consumers, but the current
+Impactpool search and detail pages do not require browser automation.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
-from urllib.parse import urljoin
+from typing import TYPE_CHECKING
+from urllib.parse import urljoin, urlparse
 
 from ijobs_scraper._registry import AdapterRegistry
-from ijobs_scraper.adapters.base import BrowserAdapter
+from ijobs_scraper.adapters.base import HTMLAdapter
 from ijobs_scraper.models import RawListing, SourceConfig
 
 if TYPE_CHECKING:
@@ -31,134 +19,96 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MAX_PAGES = 50
-_JOB_CARD_SELECTOR = "a.job-listing, .job-card a, .search-result a[href*='/jobs/']"
-_NEXT_LINK_SELECTOR = "a[rel='next'], .pagination a.next, .pagination li.next a"
+DEFAULT_COUNTRY_ID = "115"
+DEFAULT_MAX_PAGES = 50
+_HOST_SUFFIX = "impactpool.org"
 
 
 @AdapterRegistry.register("impactpool")
-class ImpactpoolAdapter(BrowserAdapter):
-    """Scrapes jobs from Impactpool Kenya.
-
-    Impactpool is a Rails application with Stimulus controllers that
-    enhance the job listing pages with JavaScript. The adapter uses
-    Playwright to render the pages and extract job data.
-    """
-
-    _host_suffix = "impactpool.org"
-    _detail_selector = ".job-detail, .job-description, article, main"
-    _detail_min_length = 0
+class ImpactpoolAdapter(HTMLAdapter):
+    """Scrape Impactpool's server-rendered search results for Kenya."""
 
     async def fetch_listings(self, config: SourceConfig) -> AsyncIterator[RawListing]:
-        """Fetch job listings from Impactpool.
-
-        Navigates to the Kenya jobs page, extracts job cards from
-        the rendered HTML, and paginates through results.
-
-        Args:
-            config: Source configuration with ``base_url`` pointing to
-                the Impactpool domain.
-
-        Yields:
-            A ``RawListing`` for each job card found.
-        """
+        """Yield Impactpool job cards and follow its Show more pagination."""
         base = config.base_url.rstrip("/")
-        country_filter = config.config.get("country", "kenya")
-        url = f"{base}/jobs?country={country_filter}"
-        max_pages = int(config.config.get("max_pages", _DEFAULT_MAX_PAGES))
+        url = f"{base}/search"
+        country_id = str(config.config.get("country_id", DEFAULT_COUNTRY_ID))
+        max_pages = max(1, int(config.config.get("max_pages", DEFAULT_MAX_PAGES)))
+        seen_urls: set[str] = set()
 
-        try:
-            page: Any = await self._launch_browser()
-            await self._navigate(page, url)
+        for page in range(1, max_pages + 1):
+            soup = await self._fetch_page(
+                url,
+                params={
+                    "wl[]": country_id,
+                    "page": str(page),
+                    "per_page": "40",
+                },
+            )
+            cards = soup.select("main#job_list .job > a[href*='/jobs/']")
+            if not cards:
+                break
 
-            for page_num in range(1, max_pages + 1):
-                # Wait for job listing content to render
-                try:
-                    await page.wait_for_selector(
-                        _JOB_CARD_SELECTOR,
-                        timeout=self._page_timeout * 1000,
-                    )
-                except Exception as exc:
-                    if page_num == 1:
-                        logger.warning(
-                            "No job cards found on first page for %s: %s",
-                            config.slug,
-                            exc,
-                        )
-                    else:
-                        logger.debug(
-                            "No more job cards on page %d for %s: %s",
-                            page_num,
-                            config.slug,
-                            exc,
-                        )
-                    break
+            for card in cards:
+                href = card.get("href")
+                if not isinstance(href, str):
+                    continue
+                external_url = urljoin(base + "/", href)
+                if not self._validate_url(external_url, _HOST_SUFFIX):
+                    continue
+                if external_url in seen_urls:
+                    continue
 
-                cards = await page.query_selector_all(_JOB_CARD_SELECTOR)
-                if not cards:
-                    break
+                title_element = card.select_one('[type="cardTitle"]')
+                title = title_element.get_text(" ", strip=True) if title_element else ""
+                if not title:
+                    continue
 
-                for card in cards:
-                    try:
-                        href = await card.get_attribute("href")
-                        if not href or "/jobs/" not in href:
-                            continue
+                organization_element = card.select_one('[type="bodyEmphasis"]')
+                company_name = (
+                    organization_element.get_text(" ", strip=True)
+                    if organization_element
+                    else config.name
+                )
+                path_parts = [part for part in urlparse(external_url).path.split("/") if part]
+                external_id = path_parts[-1] if path_parts else None
+                seen_urls.add(external_url)
 
-                        external_url = urljoin(base + "/", href)
-                        external_url = self._validate_url(external_url, self._host_suffix) or ""
-                        if not external_url:
-                            continue
+                yield RawListing(
+                    external_id=external_id,
+                    external_url=external_url,
+                    title=title,
+                    company_name=company_name or config.name,
+                )
 
-                        # Extract title from link text or nested heading
-                        title_el = await card.query_selector("h2, h3, .job-title, .title")
-                        if title_el:
-                            title = await title_el.text_content()
-                        else:
-                            title = await card.text_content()
+            more_link = soup.select_one("#search_results_more_button a[href]")
+            if more_link is None:
+                break
+        else:
+            logger.warning(
+                "Reached MAX_PAGES (%d) for source %s — results may be truncated",
+                max_pages,
+                config.slug,
+            )
 
-                        if not title or not title.strip():
-                            continue
-                        title = title.strip()
+    async def fetch_detail(self, listing: RawListing, config: SourceConfig) -> RawListing:
+        """Fetch the server-rendered Impactpool job description."""
+        if listing.raw_html:
+            return listing
+        if not self._validate_url(listing.external_url, _HOST_SUFFIX):
+            logger.warning(
+                "Rejecting Impactpool detail URL outside expected host: %s",
+                listing.external_url,
+            )
+            return listing
 
-                        # Try to extract organization name
-                        org = config.name
-                        org_el = await card.query_selector(".organization, .company, .employer")
-                        if org_el:
-                            org_text = await org_el.text_content()
-                            if org_text and org_text.strip():
-                                org = org_text.strip()
+        soup = await self._fetch_page(listing.external_url, detail=True)
+        detail = soup.select_one("#job-description")
+        if detail is None:
+            logger.warning("Impactpool detail container missing for %s", listing.external_url)
+            return listing
+        return listing.model_copy(update={"raw_html": str(detail)})
 
-                        yield RawListing(
-                            external_url=external_url,
-                            title=title,
-                            company_name=org,
-                        )
-                    except Exception:
-                        logger.warning(
-                            "Skipping malformed Impactpool listing on page %d",
-                            page_num,
-                            exc_info=True,
-                        )
-                        continue
-
-                # Try to navigate to next page
-                next_link = await page.query_selector(_NEXT_LINK_SELECTOR)
-                if next_link is None:
-                    break
-
-                await next_link.click()
-                try:
-                    await page.wait_for_selector(
-                        _JOB_CARD_SELECTOR,
-                        timeout=self._page_timeout * 1000,
-                    )
-                except Exception as exc:
-                    logger.debug(
-                        "Pagination ended on page %d for %s: %s",
-                        page_num,
-                        config.slug,
-                        exc,
-                    )
-                    break
-        finally:
-            await self._close_browser()
+    def can_handle_url(self, url: str) -> bool:
+        """Return whether *url* belongs to Impactpool."""
+        return self._validate_url(url, _HOST_SUFFIX) is not None

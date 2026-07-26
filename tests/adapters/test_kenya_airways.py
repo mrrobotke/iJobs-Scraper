@@ -321,7 +321,7 @@ class TestFetchListings:
             httpx.Response(200, json=MOCK_PAGE_1),
             httpx.Response(429, headers={"Retry-After": "60"}),
         ]
-        adapter = KenyaAirwaysAdapter(request_delay=0)
+        adapter = KenyaAirwaysAdapter(request_delay=0, max_attempts=1)
         with pytest.raises(RateLimitError) as exc_info:
             _ = [listing async for listing in adapter.fetch_listings(_make_config())]
         assert exc_info.value.retry_after == 60
@@ -334,7 +334,7 @@ class TestFetchListings:
             httpx.Response(200, json=MOCK_PAGE_1),
             httpx.Response(500),
         ]
-        adapter = KenyaAirwaysAdapter(request_delay=0)
+        adapter = KenyaAirwaysAdapter(request_delay=0, max_attempts=1)
         with pytest.raises(httpx.HTTPStatusError) as exc_info:
             _ = [listing async for listing in adapter.fetch_listings(_make_config())]
         assert exc_info.value.response.status_code == 500

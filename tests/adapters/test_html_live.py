@@ -6,7 +6,6 @@ Run manually with: pytest tests/adapters/test_html_live.py -v -m live
 
 from __future__ import annotations
 
-import httpx
 import pytest
 
 from ijobs_scraper.adapters.html.brightermonday import BrighterMondayAdapter
@@ -14,6 +13,7 @@ from ijobs_scraper.adapters.html.fuzu import FuzuAdapter
 from ijobs_scraper.adapters.html.kcb import KCBAdapter
 from ijobs_scraper.adapters.html.mygov import MyGovAdapter
 from ijobs_scraper.adapters.html.myjobmag import MyJobMagAdapter
+from ijobs_scraper.adapters.html.ncba import NCBAAdapter
 from ijobs_scraper.models import SourceConfig, SourceType
 
 pytestmark = pytest.mark.live
@@ -75,28 +75,48 @@ class TestMyJobMagLive:
 
 
 class TestMyGovLive:
-    async def test_fetch_listings_no_crash(self) -> None:
-        """MyGov /job-adverts may 404 — adapter must not crash."""
-        adapter = MyGovAdapter()
+    async def test_fetch_listings_returns_adverts(self) -> None:
+        adapter = MyGovAdapter(request_delay=0, jitter=0)
         config = _config(
             "MyGov Kenya",
             "mygov",
             "mygov",
-            "https://www.mygov.go.ke",
+            "https://gaa.go.ke",
         )
         listings = []
-        try:
-            async for listing in adapter.fetch_listings(config):
-                listings.append(listing)
-                if len(listings) >= 3:
-                    break
-        except httpx.HTTPStatusError:
-            pass  # Portal may have removed /job-adverts (404)
+        async for listing in adapter.fetch_listings(config):
+            listings.append(listing)
+            if len(listings) >= 3:
+                break
         await adapter.close()
 
-        # Just verify no crash — MyGov may have removed /job-adverts
+        assert len(listings) >= 1
         for listing in listings:
-            assert listing.external_url.startswith("http")
+            assert listing.external_url.startswith("https://gaa.go.ke/")
+            assert listing.title
+            assert listing.company_name
+
+
+class TestNCBALive:
+    async def test_fetch_listings_no_crash_when_no_openings(self) -> None:
+        adapter = NCBAAdapter(request_delay=0, jitter=0)
+        config = _config(
+            "NCBA Bank",
+            "ncba",
+            "ncba",
+            "https://ncbagroup.com",
+        )
+        listings = []
+        async for listing in adapter.fetch_listings(config):
+            listings.append(listing)
+            if len(listings) >= 3:
+                break
+        await adapter.close()
+
+        for listing in listings:
+            assert listing.external_url.startswith("https://ncbagroup.com/")
+            assert listing.title
+            assert listing.company_name == "NCBA Bank"
 
 
 class TestFuzuLive:

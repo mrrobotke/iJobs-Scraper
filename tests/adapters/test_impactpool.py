@@ -1,76 +1,57 @@
-"""Tests for ImpactpoolAdapter."""
+"""Tests for the server-rendered Impactpool adapter."""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+import httpx
+import respx
 
 from ijobs_scraper._registry import AdapterRegistry
 from ijobs_scraper.adapters.browser.impactpool import ImpactpoolAdapter
 from ijobs_scraper.models import RawListing, SourceConfig, SourceType
 
 BASE_URL = "https://www.impactpool.org"
+SEARCH_URL = f"{BASE_URL}/search"
+LISTINGS_HTML = """
+<main id="job_list">
+  <div class="job">
+    <a href="/jobs/1223430">
+      <div class="ip-typography" type="cardTitle">Partnerships Manager</div>
+      <div class="ip-typography" type="bodyEmphasis">Justdiggit Foundation</div>
+      <div class="ip-typography" type="bodyEmphasis">Nairobi</div>
+    </a>
+  </div>
+  <div class="job">
+    <a href="/jobs/1228095">
+      <div class="ip-typography" type="cardTitle">Project Assistant</div>
+      <div class="ip-typography" type="bodyEmphasis">UN-Habitat</div>
+    </a>
+  </div>
+  <turbo-frame id="search_results_more_button">
+    <a href="/search?page=2&amp;per_page=40&amp;wl%5B%5D=115">Show more</a>
+  </turbo-frame>
+</main>
+"""
+LAST_PAGE_HTML = """
+<main id="job_list">
+  <div class="job">
+    <a href="/jobs/1228000">
+      <div class="ip-typography" type="cardTitle">Software Developer</div>
+      <div class="ip-typography" type="bodyEmphasis">IRC</div>
+    </a>
+  </div>
+</main>
+"""
 
 
-def _make_config() -> SourceConfig:
+def _make_config(**config: object) -> SourceConfig:
     return SourceConfig(
         name="Impactpool",
         slug="impactpool",
         adapter="impactpool",
-        source_type=SourceType.BROWSER,
+        source_type=SourceType.HTML,
         base_url=BASE_URL,
+        config=dict(config),
     )
-
-
-def _make_mock_card(
-    title: str = "Programme Manager",
-    href: str = "/jobs/programme-manager-12345",
-    org: str | None = "UNDP",
-) -> AsyncMock:
-    """Create a mock Playwright element handle for a job card."""
-    card = AsyncMock()
-    card.get_attribute = AsyncMock(return_value=href)
-
-    # Title element
-    title_el = AsyncMock()
-    title_el.text_content = AsyncMock(return_value=title)
-
-    # Organization element (second query_selector call)
-    if org:
-        org_el = AsyncMock()
-        org_el.text_content = AsyncMock(return_value=org)
-        # First call returns title_el, subsequent calls for org
-        card.query_selector = AsyncMock(side_effect=[title_el, org_el])
-    else:
-        card.query_selector = AsyncMock(side_effect=[title_el, None])
-
-    return card
-
-
-def _make_mock_page(
-    cards: list[AsyncMock] | None = None,
-    has_next: bool = False,
-) -> AsyncMock:
-    """Create a mock Playwright page."""
-    page = AsyncMock()
-    page.goto = AsyncMock()
-    page.wait_for_selector = AsyncMock()
-    page.set_default_timeout = MagicMock()
-
-    if cards is None:
-        cards = [_make_mock_card()]
-
-    page.query_selector_all = AsyncMock(return_value=cards)
-
-    if has_next:
-        next_link = AsyncMock()
-        next_link.click = AsyncMock()
-        page.query_selector = AsyncMock(return_value=next_link)
-    else:
-        page.query_selector = AsyncMock(return_value=None)
-
-    return page
 
 
 class TestImpactpoolRegistration:
@@ -80,205 +61,87 @@ class TestImpactpoolRegistration:
 
 
 class TestFetchListings:
-    async def test_parses_single_page(self) -> None:
-        cards = [
-            _make_mock_card("Programme Manager", "/jobs/pm-001", "UNDP"),
-            _make_mock_card("M&E Officer", "/jobs/me-002", "UNICEF"),
+    @respx.mock
+    async def test_parses_server_rendered_job_cards(self) -> None:
+        route = respx.get(SEARCH_URL).mock(return_value=httpx.Response(200, text=LAST_PAGE_HTML))
+        adapter = ImpactpoolAdapter(request_delay=0, jitter=0)
+
+        listings = [listing async for listing in adapter.fetch_listings(_make_config())]
+
+        assert len(listings) == 1
+        assert listings[0].external_id == "1228000"
+        assert listings[0].title == "Software Developer"
+        assert listings[0].company_name == "IRC"
+        assert listings[0].external_url == f"{BASE_URL}/jobs/1228000"
+        assert "wl%5B%5D=115" in str(route.calls[0].request.url)
+
+    @respx.mock
+    async def test_follows_show_more_pagination(self) -> None:
+        route = respx.get(SEARCH_URL).mock(
+            side_effect=[
+                httpx.Response(200, text=LISTINGS_HTML),
+                httpx.Response(200, text=LAST_PAGE_HTML),
+            ]
+        )
+        adapter = ImpactpoolAdapter(request_delay=0, jitter=0)
+
+        listings = [listing async for listing in adapter.fetch_listings(_make_config())]
+
+        assert [listing.external_id for listing in listings] == [
+            "1223430",
+            "1228095",
+            "1228000",
         ]
-        mock_page = _make_mock_page(cards=cards)
+        assert route.call_count == 2
+        assert "page=2" in str(route.calls[1].request.url)
 
-        adapter = ImpactpoolAdapter(page_timeout=5.0, nav_delay=0)
-        with (
-            patch.object(adapter, "_launch_browser", return_value=mock_page),
-            patch.object(adapter, "_close_browser", new_callable=AsyncMock),
-        ):
-            listings = [listing async for listing in adapter.fetch_listings(_make_config())]
+    @respx.mock
+    async def test_empty_results_are_successful(self) -> None:
+        respx.get(SEARCH_URL).mock(
+            return_value=httpx.Response(200, text='<main id="job_list"></main>')
+        )
+        adapter = ImpactpoolAdapter(request_delay=0, jitter=0)
 
-        assert len(listings) == 2
-        assert listings[0].title == "Programme Manager"
-        assert listings[0].company_name == "UNDP"
-        assert listings[1].title == "M&E Officer"
-        assert listings[1].company_name == "UNICEF"
-
-    async def test_external_urls_are_absolute(self) -> None:
-        card = _make_mock_card("Test Job", "/jobs/test-123")
-        mock_page = _make_mock_page(cards=[card])
-
-        adapter = ImpactpoolAdapter(page_timeout=5.0, nav_delay=0)
-        with (
-            patch.object(adapter, "_launch_browser", return_value=mock_page),
-            patch.object(adapter, "_close_browser", new_callable=AsyncMock),
-        ):
-            listings = [listing async for listing in adapter.fetch_listings(_make_config())]
-
-        assert len(listings) == 1
-        assert listings[0].external_url.startswith("https://www.impactpool.org")
-
-    async def test_skips_card_without_jobs_href(self) -> None:
-        card = _make_mock_card("About Us", "/about")
-        mock_page = _make_mock_page(cards=[card])
-
-        adapter = ImpactpoolAdapter(page_timeout=5.0, nav_delay=0)
-        with (
-            patch.object(adapter, "_launch_browser", return_value=mock_page),
-            patch.object(adapter, "_close_browser", new_callable=AsyncMock),
-        ):
-            listings = [listing async for listing in adapter.fetch_listings(_make_config())]
-
-        assert len(listings) == 0
-
-    async def test_skips_card_with_empty_title(self) -> None:
-        card = AsyncMock()
-        card.get_attribute = AsyncMock(return_value="/jobs/empty-001")
-        title_el = AsyncMock()
-        title_el.text_content = AsyncMock(return_value="   ")
-        card.query_selector = AsyncMock(side_effect=[title_el, None])
-
-        mock_page = _make_mock_page(cards=[card])
-
-        adapter = ImpactpoolAdapter(page_timeout=5.0, nav_delay=0)
-        with (
-            patch.object(adapter, "_launch_browser", return_value=mock_page),
-            patch.object(adapter, "_close_browser", new_callable=AsyncMock),
-        ):
-            listings = [listing async for listing in adapter.fetch_listings(_make_config())]
-
-        assert len(listings) == 0
-
-    async def test_empty_page_returns_nothing(self) -> None:
-        mock_page = _make_mock_page(cards=[])
-        mock_page.wait_for_selector = AsyncMock(side_effect=TimeoutError("no cards"))
-
-        adapter = ImpactpoolAdapter(page_timeout=5.0, nav_delay=0)
-        with (
-            patch.object(adapter, "_launch_browser", return_value=mock_page),
-            patch.object(adapter, "_close_browser", new_callable=AsyncMock),
-        ):
-            listings = [listing async for listing in adapter.fetch_listings(_make_config())]
-
-        assert len(listings) == 0
-
-    async def test_fallback_company_name(self) -> None:
-        """Falls back to config.name when no org element is found."""
-        card = _make_mock_card("Data Analyst", "/jobs/da-001", org=None)
-        mock_page = _make_mock_page(cards=[card])
-
-        adapter = ImpactpoolAdapter(page_timeout=5.0, nav_delay=0)
-        with (
-            patch.object(adapter, "_launch_browser", return_value=mock_page),
-            patch.object(adapter, "_close_browser", new_callable=AsyncMock),
-        ):
-            listings = [listing async for listing in adapter.fetch_listings(_make_config())]
-
-        assert len(listings) == 1
-        assert listings[0].company_name == "Impactpool"
-
-    async def test_browser_cleanup_on_error(self) -> None:
-        mock_page = AsyncMock()
-        mock_page.goto = AsyncMock(side_effect=RuntimeError("connection failed"))
-        mock_page.set_default_timeout = MagicMock()
-
-        adapter = ImpactpoolAdapter(page_timeout=5.0, nav_delay=0)
-        close_mock = AsyncMock()
-        with (
-            patch.object(adapter, "_launch_browser", return_value=mock_page),
-            patch.object(adapter, "_close_browser", close_mock),
-            pytest.raises(RuntimeError, match="connection failed"),
-        ):
-            _ = [listing async for listing in adapter.fetch_listings(_make_config())]
-
-        close_mock.assert_awaited_once()
-
-    async def test_pagination(self) -> None:
-        """Test that adapter follows next link through pages."""
-        cards_page1 = [_make_mock_card("Job A", "/jobs/a-1", "UNDP")]
-        cards_page2 = [_make_mock_card("Job B", "/jobs/b-2", "UNICEF")]
-
-        mock_page = AsyncMock()
-        mock_page.goto = AsyncMock()
-        mock_page.wait_for_selector = AsyncMock()
-        mock_page.set_default_timeout = MagicMock()
-
-        call_count = 0
-
-        async def query_selector_all_side_effect(selector: str) -> list[AsyncMock]:
-            nonlocal call_count
-            call_count += 1
-            if call_count <= 1:
-                return cards_page1
-            return cards_page2
-
-        mock_page.query_selector_all = AsyncMock(side_effect=query_selector_all_side_effect)
-
-        next_link = AsyncMock()
-        next_link.click = AsyncMock()
-        mock_page.query_selector = AsyncMock(side_effect=[next_link, None])
-
-        adapter = ImpactpoolAdapter(page_timeout=5.0, nav_delay=0)
-        with (
-            patch.object(adapter, "_launch_browser", return_value=mock_page),
-            patch.object(adapter, "_close_browser", new_callable=AsyncMock),
-        ):
-            listings = [listing async for listing in adapter.fetch_listings(_make_config())]
-
-        assert len(listings) == 2
-        assert listings[0].title == "Job A"
-        assert listings[1].title == "Job B"
-
-    async def test_per_card_exception_isolation(self) -> None:
-        """One card raising an exception should not stop remaining cards."""
-        bad_card = AsyncMock()
-        bad_card.get_attribute = AsyncMock(return_value="/jobs/bad-001")
-        bad_card.query_selector = AsyncMock(side_effect=RuntimeError("DOM error"))
-
-        good_card = _make_mock_card("Good Job", "/jobs/good-002", "UNDP")
-        mock_page = _make_mock_page(cards=[bad_card, good_card])
-
-        adapter = ImpactpoolAdapter(page_timeout=5.0, nav_delay=0)
-        with (
-            patch.object(adapter, "_launch_browser", return_value=mock_page),
-            patch.object(adapter, "_close_browser", new_callable=AsyncMock),
-        ):
-            listings = [listing async for listing in adapter.fetch_listings(_make_config())]
-
-        assert len(listings) == 1
-        assert listings[0].title == "Good Job"
+        assert [listing async for listing in adapter.fetch_listings(_make_config())] == []
 
 
 class TestFetchDetail:
-    """Tests for fetch_detail behavior.
-
-    These tests work with both the per-adapter fetch_detail (if present)
-    and the base class implementation using class attributes.
-    """
-
-    async def test_skips_if_already_has_detail(self) -> None:
-        adapter = ImpactpoolAdapter()
-        listing = RawListing(
-            external_url=f"{BASE_URL}/jobs/test-001",
-            title="Test Job",
-            company_name="Test Org",
-            raw_html="<div>Already loaded</div>",
+    @respx.mock
+    async def test_fetches_job_description(self) -> None:
+        url = f"{BASE_URL}/jobs/1223430"
+        respx.get(url).mock(
+            return_value=httpx.Response(
+                200,
+                text=(
+                    '<div id="job-description"><h1>Partnerships Manager</h1>'
+                    "<p>Build strategic partnerships.</p></div>"
+                ),
+            )
         )
-        result = await adapter.fetch_detail(listing, _make_config())
-        assert result.raw_html == "<div>Already loaded</div>"
-
-    async def test_rejects_external_host(self) -> None:
-        adapter = ImpactpoolAdapter()
+        adapter = ImpactpoolAdapter(request_delay=0, jitter=0)
         listing = RawListing(
-            external_url="https://evil.com/steal",
-            title="Bad Job",
-            company_name="Evil Corp",
+            external_id="1223430",
+            external_url=url,
+            title="Partnerships Manager",
         )
+
         result = await adapter.fetch_detail(listing, _make_config())
-        assert result.raw_html is None
+
+        assert result.raw_html is not None
+        assert "Build strategic partnerships" in result.raw_html
+
+    @respx.mock
+    async def test_rejects_non_impactpool_detail_url(self) -> None:
+        adapter = ImpactpoolAdapter(request_delay=0, jitter=0)
+        listing = RawListing(external_url="https://example.com/jobs/1")
+
+        assert await adapter.fetch_detail(listing, _make_config()) is listing
+        assert respx.calls.call_count == 0
 
 
 class TestCanHandleUrl:
     def test_impactpool_url(self) -> None:
-        adapter = ImpactpoolAdapter()
-        assert adapter.can_handle_url("https://www.impactpool.org/jobs/pm-12345")
+        assert ImpactpoolAdapter().can_handle_url("https://www.impactpool.org/jobs/1223430")
 
     def test_non_impactpool_url(self) -> None:
-        adapter = ImpactpoolAdapter()
-        assert not adapter.can_handle_url("https://www.example.com/job/123")
+        assert not ImpactpoolAdapter().can_handle_url("https://example.com/jobs/1")

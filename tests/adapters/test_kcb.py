@@ -13,7 +13,7 @@ from ijobs_scraper.models import RawListing, SourceConfig, SourceType
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "html"
 BASE_URL = "https://ke.kcbgroup.com"
-CAREERS_URL = f"{BASE_URL}/about/careers"
+CAREERS_URL = f"{BASE_URL}/careers"
 
 
 def _load_fixture(name: str) -> str:
