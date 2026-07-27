@@ -9,7 +9,7 @@ import pytest
 from ijobs_scraper._registry import AdapterRegistry
 from ijobs_scraper.adapters.base import APIAdapter
 from ijobs_scraper.engine import ScraperEngine
-from ijobs_scraper.exceptions import AdapterError
+from ijobs_scraper.exceptions import AdapterError, ProviderUnavailableError
 from ijobs_scraper.models import EnrichedJob, RawListing, SourceConfig, SourceType
 
 from .conftest import StubAIProvider, StubStorageBackend
@@ -98,6 +98,21 @@ class FailingAdapter(APIAdapter):
 
     def can_handle_url(self, url: str) -> bool:
         return False
+
+
+class UnavailableAIProvider:
+    """Provider-wide failure that must not poison an individual listing URL."""
+
+    async def structured_extract(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        json_schema: dict[str, object],
+    ) -> dict[str, object]:
+        raise ProviderUnavailableError(
+            "AI provider rejected its configured credentials",
+            retry_after_seconds=300,
+        )
 
 
 class TestScrapeSource:
@@ -192,6 +207,21 @@ class TestScrapeSource:
         assert second_result.jobs_duplicated == 2
         assert second_result.jobs_created == 1
         assert second_result.continuation_required is False
+
+    async def test_provider_outage_aborts_without_checkpointing_listing(self) -> None:
+        AdapterRegistry.register("test_adapter")(MockAdapter)
+        storage = StubStorageBackend()
+        engine = ScraperEngine(ai_provider=UnavailableAIProvider(), storage=storage)
+
+        with pytest.raises(
+            ProviderUnavailableError,
+            match="configured credentials",
+        ) as exc_info:
+            await engine.scrape_source(_make_source(config={"max_new_listings_per_batch": 2}))
+
+        assert exc_info.value.retry_after_seconds == 300
+        assert storage.failed_listings == []
+        assert storage.known_urls.get("test-source", set()) == set()
 
     @pytest.mark.parametrize("limit", [0, -1, "not-a-number"])
     async def test_rejects_invalid_batch_limit(self, limit: object) -> None:

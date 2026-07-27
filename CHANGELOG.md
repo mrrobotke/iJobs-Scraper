@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-07-27
+
+### Added
+
+- `ProviderUnavailableError` for provider-wide authentication, rate-limit,
+  transport, and service failures, including an optional durable-retry delay.
+
+### Fixed
+
+- Provider-wide enrichment outages now abort the source batch without
+  checkpointing the current listing as permanently failed.
+
 ## [0.1.6] - 2026-07-27
 
 ### Added
@@ -89,6 +101,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Step-by-step adapter contributor guide with templates for all 3 adapter types
 - Standalone, FastAPI, and iJobs integration examples
 
+[0.1.7]: https://github.com/mrrobotke/ijobs-scraper/releases/tag/v0.1.7
 [0.1.6]: https://github.com/mrrobotke/ijobs-scraper/releases/tag/v0.1.6
 [0.1.5]: https://github.com/mrrobotke/ijobs-scraper/releases/tag/v0.1.5
 [0.1.3]: https://github.com/mrrobotke/ijobs-scraper/releases/tag/v0.1.3

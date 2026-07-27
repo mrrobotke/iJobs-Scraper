@@ -18,6 +18,19 @@ class EnrichmentError(ScraperError):
     """AI enrichment pipeline failed."""
 
 
+class ProviderUnavailableError(ScraperError):
+    """A provider-wide failure that must abort the source without checkpointing a URL.
+
+    Host applications should raise this for authentication, rate-limit,
+    transport, or service failures that are independent of the current
+    listing. The retry delay is a scheduling hint for durable workers.
+    """
+
+    def __init__(self, message: str, *, retry_after_seconds: float | None = None) -> None:
+        self.retry_after_seconds = retry_after_seconds
+        super().__init__(message)
+
+
 class DuplicateJobError(ScraperError):
     """Job already exists (detected by dedup)."""
 

@@ -22,6 +22,7 @@ def test_all_exports() -> None:
         "HTMLAdapter",
         "JobCallback",
         "JobRequirements",
+        "ProviderUnavailableError",
         "RateLimitError",
         "RawListing",
         "ScrapeResult",
