@@ -235,6 +235,12 @@ See the [full adapter guide](CONTRIBUTING.md#adding-a-new-adapter) and [docs/add
 | `is_active` | `bool` | Whether this source is enabled (default: `True`) |
 | `config` | `dict` | Adapter-specific configuration (see below) |
 
+All adapters also support `config["max_new_listings_per_batch"]`. When a
+positive batch size is reached, `ScrapeResult.continuation_required` is `True`.
+Queue-backed hosts should commit that batch and requeue the source. Known URLs
+do not consume the batch, so repeated continuations progressively crawl the
+complete source instead of truncating it.
+
 ### Adapter-specific config examples
 
 ```python
@@ -321,6 +327,7 @@ from ijobs_scraper import (
     ScrapeResult,        # Scrape run statistics and status
     AIProvider,          # Protocol: host app implements AI extraction
     StorageBackend,      # Protocol: host app implements persistence
+    FailureTrackingStorageBackend,  # Optional durable failed-URL checkpoints
     JobCallback,         # Protocol: host app handles enriched jobs
     AdapterRegistry,     # Adapter registration and lookup
     BaseAdapter,         # Abstract base for all adapters

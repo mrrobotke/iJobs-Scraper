@@ -18,13 +18,18 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 
-def _make_source(adapter: str = "test_adapter") -> SourceConfig:
+def _make_source(
+    adapter: str = "test_adapter",
+    *,
+    config: dict[str, object] | None = None,
+) -> SourceConfig:
     return SourceConfig(
         name="Test Source",
         slug="test-source",
         adapter=adapter,
         source_type=SourceType.API,
         base_url="https://example.com",
+        config=config or {},
     )
 
 
@@ -120,6 +125,84 @@ class TestScrapeSource:
         assert result.jobs_found == 2
         assert result.jobs_duplicated == 1
         assert result.jobs_created == 1
+
+    async def test_batch_continuation_counts_only_new_listings(self) -> None:
+        listings = [
+            RawListing(
+                external_id=str(index),
+                external_url=f"https://example.com/job/{index}",
+                title=f"Job {index}",
+                raw_json={"title": f"Job {index}", "description": "Details"},
+                company_name="Test Corp",
+            )
+            for index in range(1, 6)
+        ]
+
+        class BatchMockAdapter(MockAdapter):
+            def __init__(self) -> None:
+                super().__init__(listings)
+
+        AdapterRegistry.register("test_adapter")(BatchMockAdapter)
+        ai = StubAIProvider()
+        storage = StubStorageBackend()
+        storage.known_urls["test-source"] = {
+            "https://example.com/job/1",
+            "https://example.com/job/2",
+        }
+
+        engine = ScraperEngine(ai_provider=ai, storage=storage)
+        first_result = await engine.scrape_source(
+            _make_source(config={"max_new_listings_per_batch": 2})
+        )
+
+        assert first_result.jobs_found == 4
+        assert first_result.jobs_duplicated == 2
+        assert first_result.jobs_created == 2
+        assert first_result.continuation_required is True
+        assert len(ai.calls) == 2
+
+        second_result = await engine.scrape_source(
+            _make_source(config={"max_new_listings_per_batch": 2})
+        )
+
+        assert second_result.jobs_found == 5
+        assert second_result.jobs_duplicated == 4
+        assert second_result.jobs_created == 1
+        assert second_result.continuation_required is False
+        assert len(ai.calls) == 3
+
+    async def test_failed_listing_is_checkpointed_before_continuation(self) -> None:
+        AdapterRegistry.register("test_adapter")(FailingAdapter)
+        ai = StubAIProvider()
+        storage = StubStorageBackend()
+        engine = ScraperEngine(ai_provider=ai, storage=storage)
+
+        first_result = await engine.scrape_source(
+            _make_source(config={"max_new_listings_per_batch": 2})
+        )
+        second_result = await engine.scrape_source(
+            _make_source(config={"max_new_listings_per_batch": 2})
+        )
+
+        assert first_result.jobs_created == 1
+        assert first_result.jobs_failed == 1
+        assert first_result.continuation_required is True
+        assert len(storage.failed_listings) == 1
+        assert storage.failed_listings[0][1].external_url == "https://example.com/job/2"
+        assert second_result.jobs_duplicated == 2
+        assert second_result.jobs_created == 1
+        assert second_result.continuation_required is False
+
+    @pytest.mark.parametrize("limit", [0, -1, "not-a-number"])
+    async def test_rejects_invalid_batch_limit(self, limit: object) -> None:
+        AdapterRegistry.register("test_adapter")(MockAdapter)
+        engine = ScraperEngine(ai_provider=StubAIProvider())
+
+        with pytest.raises(
+            ValueError,
+            match="max_new_listings_per_batch must be a positive integer",
+        ):
+            await engine.scrape_source(_make_source(config={"max_new_listings_per_batch": limit}))
 
     async def test_layer2_dedup_via_storage(self) -> None:
         AdapterRegistry.register("test_adapter")(MockAdapter)

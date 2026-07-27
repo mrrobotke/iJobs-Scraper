@@ -18,6 +18,7 @@ def test_all_exports() -> None:
         "DuplicateJobError",
         "EnrichedJob",
         "EnrichmentError",
+        "FailureTrackingStorageBackend",
         "HTMLAdapter",
         "JobCallback",
         "JobRequirements",

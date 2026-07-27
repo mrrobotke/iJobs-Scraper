@@ -144,6 +144,7 @@ Summary of a single source scrape run.
 | `jobs_duplicated` | `int` | Duplicates skipped |
 | `jobs_failed` | `int` | Failed enrichments |
 | `errors` | `list[str]` | Error messages |
+| `continuation_required` | `bool` | Whether the host should requeue this source to continue crawling |
 
 ### `JobRequirements`
 
@@ -194,6 +195,18 @@ class StorageBackend(Protocol):
 ```
 
 Provides persistence for deduplication and raw listing storage.
+
+### `FailureTrackingStorageBackend`
+
+Optional storage extension used by resumable crawls:
+
+```python
+class FailureTrackingStorageBackend(Protocol):
+    async def mark_failed(self, source_slug: str, listing: RawListing) -> None: ...
+```
+
+Persisting failed URLs lets later continuations advance past permanently
+unparseable listings.
 
 ### `JobCallback`
 

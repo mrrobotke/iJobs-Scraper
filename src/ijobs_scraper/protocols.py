@@ -50,6 +50,15 @@ class StorageBackend(Protocol):
 
 
 @runtime_checkable
+class FailureTrackingStorageBackend(Protocol):
+    """Optional storage extension for durable failed-listing checkpoints."""
+
+    async def mark_failed(self, source_slug: str, listing: RawListing) -> None:
+        """Persist a failed URL so a continuation can advance past it."""
+        ...
+
+
+@runtime_checkable
 class JobCallback(Protocol):
     """Callback invoked for each newly enriched job."""
 

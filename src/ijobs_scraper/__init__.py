@@ -22,7 +22,12 @@ from ijobs_scraper.models import (
     SourceConfig,
     SourceType,
 )
-from ijobs_scraper.protocols import AIProvider, JobCallback, StorageBackend
+from ijobs_scraper.protocols import (
+    AIProvider,
+    FailureTrackingStorageBackend,
+    JobCallback,
+    StorageBackend,
+)
 from ijobs_scraper.scheduler import get_due_sources
 
 __all__ = [
@@ -35,6 +40,7 @@ __all__ = [
     "DuplicateJobError",
     "EnrichedJob",
     "EnrichmentError",
+    "FailureTrackingStorageBackend",
     "HTMLAdapter",
     "JobCallback",
     "JobRequirements",

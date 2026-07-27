@@ -70,17 +70,24 @@ class StubStorageBackend:
         self.content_hashes: set[str] = set()
         self.saved_listings: list[tuple[str, RawListing]] = []
         self.duplicates: list[tuple[str, RawListing, str]] = []
+        self.failed_listings: list[tuple[str, RawListing]] = []
 
     async def get_known_urls(self, source_slug: str) -> set[str]:
         return self.known_urls.get(source_slug, set())
 
     async def save_raw_listing(self, source_slug: str, listing: RawListing) -> None:
         self.saved_listings.append((source_slug, listing))
+        self.known_urls.setdefault(source_slug, set()).add(listing.external_url)
 
     async def mark_duplicate(
         self, source_slug: str, listing: RawListing, content_hash: str
     ) -> None:
         self.duplicates.append((source_slug, listing, content_hash))
+        self.known_urls.setdefault(source_slug, set()).add(listing.external_url)
+
+    async def mark_failed(self, source_slug: str, listing: RawListing) -> None:
+        self.failed_listings.append((source_slug, listing))
+        self.known_urls.setdefault(source_slug, set()).add(listing.external_url)
 
     async def check_content_hash(self, content_hash: str) -> bool:
         return content_hash in self.content_hashes
