@@ -11,6 +11,7 @@ from ijobs_scraper.exceptions import (
     AdapterError,
     DuplicateJobError,
     EnrichmentError,
+    ProviderUnavailableError,
     RateLimitError,
     ScraperError,
 )
@@ -44,6 +45,7 @@ __all__ = [
     "HTMLAdapter",
     "JobCallback",
     "JobRequirements",
+    "ProviderUnavailableError",
     "RateLimitError",
     "RawListing",
     "ScrapeResult",

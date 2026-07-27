@@ -15,7 +15,7 @@ from bs4.element import NavigableString
 
 from ijobs_scraper.application_destination import resolve_application_destination
 from ijobs_scraper.dedup import compute_content_hash
-from ijobs_scraper.exceptions import EnrichmentError
+from ijobs_scraper.exceptions import EnrichmentError, ProviderUnavailableError
 from ijobs_scraper.models import EnrichedJob, JobRequirements, RawListing, SourceConfig
 from ijobs_scraper.protocols import AIProvider
 
@@ -352,6 +352,8 @@ async def enrich(
             user_prompt=user_prompt,
             json_schema=EXTRACTION_SCHEMA,
         )
+    except ProviderUnavailableError:
+        raise
     except Exception as exc:
         raise EnrichmentError(f"AI extraction failed: {exc}") from exc
 

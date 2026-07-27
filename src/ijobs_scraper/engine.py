@@ -14,7 +14,7 @@ from ijobs_scraper._registry import AdapterRegistry
 from ijobs_scraper.adapters.base import BaseAdapter
 from ijobs_scraper.dedup import is_known_url
 from ijobs_scraper.enrichment import enrich
-from ijobs_scraper.exceptions import AdapterError
+from ijobs_scraper.exceptions import AdapterError, ProviderUnavailableError
 from ijobs_scraper.models import EnrichedJob, RawListing, ScrapeResult, SourceConfig, SourceType
 from ijobs_scraper.protocols import (
     AIProvider,
@@ -156,6 +156,8 @@ class ScraperEngine:
 
                     result.jobs_created += 1
 
+                except ProviderUnavailableError:
+                    raise
                 except Exception as exc:
                     result.jobs_failed += 1
                     result.errors.append(f"{listing.external_url}: {exc}")
@@ -170,6 +172,8 @@ class ScraperEngine:
                         exc_info=exc,
                     )
 
+        except ProviderUnavailableError:
+            raise
         except Exception as exc:
             result.status = "failed"
             result.errors.append(f"Adapter fetch_listings failed: {exc}")
