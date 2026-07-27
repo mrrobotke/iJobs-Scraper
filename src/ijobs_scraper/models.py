@@ -103,3 +103,4 @@ class ScrapeResult(BaseModel):
     jobs_duplicated: int = 0
     jobs_failed: int = 0
     errors: list[str] = Field(default_factory=list)
+    continuation_required: bool = False

@@ -16,9 +16,39 @@ from ijobs_scraper.dedup import is_known_url
 from ijobs_scraper.enrichment import enrich
 from ijobs_scraper.exceptions import AdapterError
 from ijobs_scraper.models import EnrichedJob, RawListing, ScrapeResult, SourceConfig, SourceType
-from ijobs_scraper.protocols import AIProvider, JobCallback, StorageBackend
+from ijobs_scraper.protocols import (
+    AIProvider,
+    FailureTrackingStorageBackend,
+    JobCallback,
+    StorageBackend,
+)
 
 _default_logger = logging.getLogger("ijobs_scraper")
+_BATCH_LIMIT_KEY = "max_new_listings_per_batch"
+
+
+def _get_batch_limit(source: SourceConfig) -> int | None:
+    """Return the configured background-batch size.
+
+    The size applies after URL deduplication so continuation runs can walk past
+    known jobs and progressively ingest the source's complete catalogue.
+    """
+    raw_limit = source.config.get(_BATCH_LIMIT_KEY)
+    if raw_limit is None:
+        return None
+
+    try:
+        if isinstance(raw_limit, bool):
+            raise ValueError
+        limit = int(raw_limit)
+        if isinstance(raw_limit, float) and not raw_limit.is_integer():
+            raise ValueError
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{_BATCH_LIMIT_KEY} must be a positive integer") from exc
+
+    if limit < 1:
+        raise ValueError(f"{_BATCH_LIMIT_KEY} must be a positive integer")
+    return limit
 
 
 class ScraperEngine:
@@ -62,6 +92,8 @@ class ScraperEngine:
 
         adapter_cls = AdapterRegistry.get(source.adapter)
         adapter = adapter_cls()
+        batch_limit = _get_batch_limit(source)
+        new_listings_attempted = 0
 
         # Layer 1 dedup: load known URLs for this source
         known_urls: set[str] = set()
@@ -75,12 +107,25 @@ class ScraperEngine:
 
         try:
             async for listing in adapter.fetch_listings(source):
-                result.jobs_found += 1
-
                 # Layer 1: source URL uniqueness
                 if self._dedup_enabled and is_known_url(listing.external_url, known_urls):
+                    result.jobs_found += 1
                     result.jobs_duplicated += 1
                     continue
+
+                if batch_limit is not None and new_listings_attempted >= batch_limit:
+                    result.continuation_required = True
+                    self._log.info(
+                        "scrape_source_continuation_required",
+                        extra={
+                            "source_slug": source.slug,
+                            _BATCH_LIMIT_KEY: batch_limit,
+                        },
+                    )
+                    break
+
+                result.jobs_found += 1
+                new_listings_attempted += 1
 
                 try:
                     # Fetch full details if needed
@@ -114,6 +159,8 @@ class ScraperEngine:
                 except Exception as exc:
                     result.jobs_failed += 1
                     result.errors.append(f"{listing.external_url}: {exc}")
+                    if self._storage and isinstance(self._storage, FailureTrackingStorageBackend):
+                        await self._storage.mark_failed(source.slug, listing)
                     self._log.warning(
                         "listing_failed",
                         extra={
